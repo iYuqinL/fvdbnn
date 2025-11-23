@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fvdbnn"
+# version = "0.1.0"
+dynamic = ["version"]
+description = "A Python neural network library for fvdb"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Yuqin Liang", email = "YuqinLiangX@gmail.com" }]
+keywords = ["deep learning", "convolution", "neural networks"]
+
+dependencies = ["numpy", "torch>=2.7.1", "fvdb-core>=0.3.0,<0.4.0"]
+
+[project.urls]
+"Homepage" = "https://github.com/iYuqinL/fvdbnn"
+"Bug Tracker" = "https://github.com/iYuqinL/fvdbnn/issues"
+
+# ============================================================
+# Setuptools
+# ============================================================
+[tool.setuptools.packages.find]
+include = ["fvdbnn*"]
+exclude = ["tests*", "docs*", "examples*"]
+
+
+[tool.setuptools.dynamic]
+version = { attr = "fvdbnn.__version__" }
