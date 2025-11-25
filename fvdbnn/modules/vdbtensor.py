@@ -28,6 +28,9 @@ from fvdb.types import Vec3dBatch, Vec3dBatchOrScalar, Vec3i
 JaggedTensorOrTensor = Union[torch.Tensor, JaggedTensor]
 
 
+__all__ = ["fVDBTensor"]
+
+
 @dataclass
 class fVDBTensor:
     """

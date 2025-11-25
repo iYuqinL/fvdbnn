@@ -4,11 +4,11 @@
 # Created Date: Saturday, November 15th 2025, 3:00:21 pm
 # Author: iYuqinL
 # -----
-# Last Modified: 
-# Modified By: 
+# Last Modified:
+# Modified By:
 # -----
 # Copyright © 2025 iYuqinL Holding Limited
-# 
+#
 # All shall be well and all shall be well and all manner of things shall be well.
 # Nope...we're doomed!
 # -----
@@ -25,6 +25,10 @@ from ..modules.vdbtensor import fVDBTensor
 from ..utils.utils import safe_perbatch_jmin, safe_perbatch_jmax
 
 import flash_attn  # flashatt v2
+
+__all__ = ["sdpa_flash_fvdb",
+           "calc_attn_window_partition",
+           "sparse_window_flash_attn"]
 
 
 def sdpa_flash_fvdb(
@@ -225,7 +229,7 @@ def calc_attn_window_partition(
             win_ijks = grids.ijk.jdata[win_idxs]
             win_ijks_max_diff = win_ijks.max(dim=0)[0] - win_ijks.min(dim=0)[0]
             if not torch.all(win_ijks_max_diff <= torch.tensor(
-                window_size, device=device, dtype=win_ijks_max_diff.dtype)):
+                    window_size, device=device, dtype=win_ijks_max_diff.dtype)):
                 print(f"window {widx} ijk diff max: {win_ijks_max_diff}")
                 print(f"window {widx} ijk: {win_ijks}")
                 raise ValueError(f"window {widx} ijk diff max: {win_ijks_max_diff}")

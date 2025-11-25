@@ -4,11 +4,11 @@
 # Created Date: Sunday, November 23rd 2025, 3:27:17 pm
 # Author: iYuqinL
 # -----
-# Last Modified: 
-# Modified By: 
+# Last Modified:
+# Modified By:
 # -----
 # Copyright © 2025 iYuqinL Holding Limited
-# 
+#
 # All shall be well and all shall be well and all manner of things shall be well.
 # Nope...we're doomed!
 # -----
@@ -23,6 +23,9 @@ import fvdb
 from .vdbtensor import fVDBTensor
 
 
+__all__ = ["SparseConv3dFVDB", "SparseConvTranspose3dFVDB"]
+
+
 class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
     def __init__(
         self,
@@ -35,7 +38,7 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
         super(SparseConv3dFVDB, self).__init__(
             in_channels, out_channels, kernel_size, stride, bias)
 
-    def forward(self, input: fVDBTensor, 
+    def forward(self, input: fVDBTensor,
                 plan: fvdb.ConvolutionPlan = None) -> fVDBTensor:
         """
         Args
@@ -43,7 +46,7 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
         input (fVDBTensor): Input fvdb sparse tensor.
 
         plan (fvdb.ConvolutionPlan): Convolution plan. Defaults to None.
-        
+
         Returns
         -------
         output (fVDBTensor): Output fvdb sparse tensor.
@@ -55,10 +58,10 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
                 plan = fvdb.ConvolutionPlan.from_grid_batch(
                     self.kernel_size, self.stride, input.grid)
                 input.register_spatial_cache(conv_key, plan)
-        
+
         if not plan.valid_usage(
-            self.in_channels, self.out_channels,
-            self.kernel_size, self.stride, transposed=False):
+                self.in_channels, self.out_channels,
+                self.kernel_size, self.stride, transposed=False):
             raise ValueError(
                 f"Convolution plan {conv_key} is not valid for "
                 f"input with shape {input.rshape} and "
@@ -81,7 +84,6 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
         return output
 
 
-
 class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
     def __init__(
         self,
@@ -94,7 +96,7 @@ class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
         super(SparseConvTranspose3dFVDB, self).__init__(
             in_channels, out_channels, kernel_size, stride, bias)
 
-    def forward(self, input: fVDBTensor, 
+    def forward(self, input: fVDBTensor,
                 plan: fvdb.ConvolutionPlan = None) -> fVDBTensor:
         """
         Args
@@ -102,7 +104,7 @@ class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
         input (fVDBTensor): Input fvdb sparse tensor.
 
         plan (fvdb.ConvolutionPlan): Convolution plan. Defaults to None.
-        
+
         Returns
         -------
         output (fVDBTensor): Output fvdb sparse tensor.
@@ -116,8 +118,8 @@ class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
                 input.register_spatial_cache(conv_key, plan)
 
         if not plan.valid_usage(
-            self.in_channels, self.out_channels,
-            self.kernel_size, self.stride, transposed=True):
+                self.in_channels, self.out_channels,
+                self.kernel_size, self.stride, transposed=True):
             raise ValueError(
                 f"Convolution plan {conv_key} is not valid for "
                 f"input with shape {input.rshape} and "

@@ -32,6 +32,13 @@ from ..modules.normalize import LayerNorm32FVDB
 from ..modules.vdbtensor import fVDBTensor
 
 
+__all__ = ["SelfAttnTransformerBlockFVDB",
+           "ModulateSelfAttnTransformerBlockFVDB",
+           "ModulateCrossAttnTransformerBlockFVDB",
+           "modulate_scale_shift",
+           "modulate_gate"]
+
+
 class SelfAttnTransformerBlockFVDB(nn.Module):
     def __init__(self,
                  emb_dim: int,

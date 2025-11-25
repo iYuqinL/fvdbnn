@@ -27,6 +27,9 @@ from ..modules.linear import LinearFVDB
 from ..modules.dropout import DropoutFVDB
 
 
+__all__ = ["FeedForwardNetworkFVDB"]
+
+
 class FeedForwardNetworkFVDB(nn.Module):
     def __init__(self,
                  in_features: int,
