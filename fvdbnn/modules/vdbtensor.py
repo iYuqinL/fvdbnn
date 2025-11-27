@@ -471,3 +471,22 @@ def fVDBTensor_from_dense(
     # Note: this would map dense_feature[0, 0, 0] to grid[ijk_min]
     data = grid.inject_from_dense_cmajor(dense_data.contiguous(), dense_origins=ijk_min)
     return fVDBTensor(grid, data)
+
+
+def jcat(things_to_cat, dim=None):
+    if len(things_to_cat) == 0:
+        raise ValueError("Cannot concatenate empty list")
+    if isinstance(things_to_cat[0], (GridBatch, JaggedTensor)):
+        return fvdb.jcat(things_to_cat, dim=dim)
+    elif isinstance(things_to_cat[0], fVDBTensor):
+        if dim == 0:
+            raise ValueError("VDBTensor concatenation does not support dim=0")
+        grids = [t.grid for t in things_to_cat]
+        data = [t.data for t in things_to_cat]
+        # FIXME: Note we're not checking that the grids can be concatenated if you pass in grids with mismatching
+        #        topology.
+        grid = fvdb.jcat(grids) if dim == None else grids[0]
+        data = fvdb.jcat(data, dim)
+        return fVDBTensor(grid, data)
+    else:
+        raise ValueError("jcat() can only cat GridBatch, JaggedTensor, or fVDBTensor")
