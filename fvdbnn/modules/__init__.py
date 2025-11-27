@@ -22,3 +22,4 @@ from .conv3d import *
 from .dropout import *
 from .linear import *
 from .normalize import *
+from .pooling import *
