@@ -54,6 +54,7 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
         if plan is None:
             conv_key = f"conv3d_ks{self.kernel_size}_stride{self.stride}"
             plan = input.get_spatial_cache(conv_key)
+            # print(f"\nconv3d_ks{self.kernel_size}_stride{self.stride} plan: {plan}")
             if plan is None:
                 plan = fvdb.ConvolutionPlan.from_grid_batch(
                     self.kernel_size, self.stride, input.grid)
@@ -110,11 +111,15 @@ class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
         output (fVDBTensor): Output fvdb sparse tensor.
         """
         if plan is None:
-            conv_key = f"conv_transpose3d_ks{self.kernel_size}_stride{self.stride}"
+            conv_key = f"conv3d_transpose3d_ks{self.kernel_size}_stride{self.stride}"
             plan = input.get_spatial_cache(conv_key)
+            # print(f"\nconv3d_transpose3d_ks{self.kernel_size}"
+            #       f"_stride{self.stride} plan: {plan}")
             if plan is None:
+                assert torch.all(self.stride == 1), "Only stride 1 is supported for now."
+                target_grid = input.grid
                 plan = fvdb.ConvolutionPlan.from_grid_batch_transposed(
-                    self.kernel_size, self.stride, input.grid)
+                    self.kernel_size, self.stride, input.grid, target_grid)
                 input.register_spatial_cache(conv_key, plan)
 
         if not plan.valid_usage(
@@ -126,7 +131,21 @@ class SparseConvTranspose3dFVDB(fvdb.nn.SparseConvTranspose3d):
                 f"kernel size {self.kernel_size} and stride {self.stride}.")
 
         intype = input.data.dtype
+        
+        # --- FIX START ---
+        # The weight is stored as (C_out, C_in, K, K, K) in _SparseConv3dBase.
+        # For transposed convolution, the fvdb backend (sparse_transpose_conv_3d) 
+        # expects the weight to be (C_in, C_out, K, K, K). We permute the first two dims.
         weight = self.weight
+        # Handle both KxKxK (5D) and 1x1x1 (2D) kernels
+        if weight.dim() == 5:
+            # (C_out, C_in, K, K, K) -> (C_in, C_out, K, K, K)
+            weight = weight.permute(1, 0, 2, 3, 4)
+        elif weight.dim() == 2:
+            # (C_out, C_in) -> (C_in, C_out)
+            weight = weight.transpose(0, 1)
+        # --- FIX END ---
+
         if intype != weight.dtype:
             weight = weight.to(intype)
         bias = self.bias
