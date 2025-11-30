@@ -22,13 +22,14 @@ from typing import Any, Optional, Tuple, Union
 import torch
 
 import fvdb
+from fvdb._fvdb_cpp import JaggedTensor as JaggedTensorCpp  # pylint: disable=E0611
 from fvdb import GridBatch, JaggedTensor
 from fvdb.types import Vec3dBatch, Vec3dBatchOrScalar, Vec3i
 
 JaggedTensorOrTensor = Union[torch.Tensor, JaggedTensor]
 
 
-__all__ = ["fVDBTensor"]
+__all__ = ["fVDBTensor", "fVDBTensor_from_dense", "jcat"]
 
 
 @dataclass
@@ -52,6 +53,8 @@ class fVDBTensor:
     def __post_init__(self):
         if not isinstance(self.grid, GridBatch):
             raise TypeError("grid should be of type GridBatch")
+        if isinstance(self.data, JaggedTensorCpp):
+            self.data = JaggedTensor(impl=self.data)
         if not isinstance(self.data, JaggedTensor):
             raise TypeError("data must be a JaggedTensor or a torch.Tensor")
         if self.grid.grid_count != len(self.data):
@@ -261,11 +264,18 @@ class fVDBTensor:
             spatial_cache=self.spatial_cache)
 
     def to(self, device_or_dtype: Any):
-        return fVDBTensor(
-            self.grid.to(device_or_dtype),
-            self.data.to(device_or_dtype),
-            spatial_cache=self.spatial_cache
-        )
+        if isinstance(device_or_dtype, torch.device):
+            return fVDBTensor(
+                self.grid.to(device_or_dtype),
+                self.data.to(device_or_dtype),
+                spatial_cache=self.spatial_cache
+            )
+        else:
+            return fVDBTensor(
+                self.grid,
+                self.data.to(device_or_dtype),
+                spatial_cache=self.spatial_cache
+            )
 
     def detach(self):
         return fVDBTensor(self.grid, self.data.detach(),
@@ -462,7 +472,7 @@ def fVDBTensor_from_dense(
     assert ijk_min is not None
     grid = fvdb.GridBatch.from_dense(
         dense_data.size(0),
-        dense_data.size()[1:4],
+        dense_data.size()[-3:],
         ijk_min=ijk_min,
         voxel_sizes=voxel_sizes,
         origins=origins,
@@ -482,11 +492,11 @@ def jcat(things_to_cat, dim=None):
         if dim == 0:
             raise ValueError("VDBTensor concatenation does not support dim=0")
         grids = [t.grid for t in things_to_cat]
-        data = [t.data for t in things_to_cat]
-        # FIXME: Note we're not checking that the grids can be concatenated if you pass in grids with mismatching
-        #        topology.
+        datas = [t.data for t in things_to_cat]
+        # FIXME: Note we're not checking that the grids can be concatenated 
+        # if you pass in grids with mismatching topology.
         grid = fvdb.jcat(grids) if dim == None else grids[0]
-        data = fvdb.jcat(data, dim)
+        data = fvdb.jcat(datas, dim)
         return fVDBTensor(grid, data)
     else:
         raise ValueError("jcat() can only cat GridBatch, JaggedTensor, or fVDBTensor")
