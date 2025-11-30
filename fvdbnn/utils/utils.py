@@ -16,15 +16,17 @@
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
 ###
+from typing import Union
 import os
 import gc
 
 import torch
 import fvdb
+from ..modules import fVDBTensor
 
 
 __all__ = ["get_nvml_handls", "get_gpu_compute_capacity", "smart_empty_cuda_cache",
-           "safe_perbatch_jmin", "safe_perbatch_jmax"]
+           "safe_perbatch_jmin", "safe_perbatch_jmax", "check_same_grid"]
 
 
 import atexit
@@ -111,3 +113,45 @@ def safe_perbatch_jmax(jtensor: fvdb.JaggedTensor, dim: int = 0) -> fvdb.JaggedT
                 dtype=jtensor_i_jdata.dtype, device=jtensor_i_jdata.device))
     max_jtensor = fvdb.JaggedTensor(max_jtensor_list)
     return max_jtensor
+
+
+def check_same_grid(
+    grid1: Union[fvdb.GridBatch, fVDBTensor],
+    grid2: Union[fvdb.GridBatch, fVDBTensor],
+    strict: bool = True,
+):
+    """
+    Check if two grids are the same.
+    
+    Args:
+        grid1 (fvdb.GridBatch): First grid batch.
+        grid2 (fvdb.GridBatch): Second grid batch.
+    """
+    if isinstance(grid1, fVDBTensor):
+        grid1 = grid1.grid
+    if isinstance(grid2, fVDBTensor):
+        grid2 = grid2.grid
+    
+    # check grid_count
+    if grid1.grid_count != grid2.grid_count:
+        return False
+    # check total voxels
+    if grid1.total_voxels != grid2.total_voxels:
+        return False
+    # check grid_size
+    if (grid1.voxel_sizes != grid2.voxel_sizes).all():
+        return False
+    # check grid_origin
+    if (grid1.origins != grid2.origins).all():
+        return False
+    # check each grid voxels number
+    if (grid1.num_voxels != grid2.num_voxels).all():
+        return False
+    
+    if not strict:
+        return True
+    
+    if (grid1.ijk.jdata != grid2.ijk.jdata).all():
+        return False
+    
+    return True
