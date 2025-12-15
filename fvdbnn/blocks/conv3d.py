@@ -24,7 +24,7 @@ import torch.nn as nn
 import fvdb
 from torch.utils.checkpoint import checkpoint
 
-from ..modules import fVDBTensor, SparseConv3dFVDB
+from ..modules import fVDBTensor, SparseConv3dFVDB, LinearFVDB
 from ..modules import MaxPoolFVDB, AvgPoolFVDB
 from ..modules import LayerNorm32FVDB, GroupNorm32FVDB
 from ..modules import SiLUFVDB
@@ -47,18 +47,22 @@ class BasicResBlock3DFVDB(nn.Module):
         act_layer=SiLUFVDB,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
         midplanes: Optional[int] = None,
+        disable_conv_output_padding: bool = True,
         checkpointing=False,
     ) -> None:
         super(BasicResBlock3DFVDB, self).__init__()
         if norm_layer is None:
             def norm_layer(chs): return GroupNorm32FVDB(1, chs)
         self.checkpointing = checkpointing
+        
+        self.disable_conv_output_padding = disable_conv_output_padding
 
         midplanes = planes if midplanes is None else midplanes
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         conv1_stride = stride if pooling is None else 1
         self.conv1 = SparseConv3dFVDB(
-            inplanes, midplanes, 3, stride=conv1_stride, bias=False)
+            inplanes, midplanes, 3, stride=conv1_stride, bias=False, 
+            disable_conv_output_padding=disable_conv_output_padding)
         self.norm1 = norm_layer(midplanes)
         self.act1 = act_layer()
 
@@ -68,14 +72,17 @@ class BasicResBlock3DFVDB(nn.Module):
             pooling_cls = MaxPoolFVDB if pooling == "max" else AvgPoolFVDB
             self.pooling = pooling_cls(kernel_size=stride)
 
-        self.conv2 = SparseConv3dFVDB(midplanes, planes, 3, stride=1, bias=False)
+        self.conv2 = SparseConv3dFVDB(
+            midplanes, planes, 3, stride=1, bias=False, 
+            disable_conv_output_padding=disable_conv_output_padding)
         self.norm2 = norm_layer(planes)
         self.act2 = act_layer()
 
         if stride != 1 or inplanes != planes*self.expansion:
             self.skip_connection = nn.Sequential(
-                SparseConv3dFVDB(
-                    inplanes, planes*self.expansion, 1, 1, bias=False),
+                # SparseConv3dFVDB(
+                #     inplanes, planes*self.expansion, 1, 1, bias=False),
+                LinearFVDB(inplanes, planes*self.expansion, bias=False),
                 norm_layer(planes*self.expansion)
             )
         else:
@@ -108,27 +115,40 @@ class BasicResBlock3DFVDB(nn.Module):
         x = fVDBTensor(grid, data, spatial_cache=spatial_cache)
         out = x.clone()
         
-        grid_padded = x.grid.conv_grid(
-            self.conv1.kernel_size, stride=self.conv1.stride)
+        if not self.disable_conv_output_padding:
+            target_grid = x.grid.conv_grid(
+                self.conv1.kernel_size, stride=self.conv1.stride)
+        else:
+            target_grid = x.grid
         plan1 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=grid_padded)
-
+            self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid)
         out = self.conv1(out, plan=plan1)
         out = self.norm1(out)
         out = self.act1(out)
         if self.pooling is not None:
-            out = self.pooling(out, ref_coarse_data=downres_grid)
+            out = self.pooling(out, coarse_data=downres_grid)
+
+        if not self.disable_conv_output_padding:
+            target_grid = out.grid.conv_grid(
+                self.conv2.kernel_size, stride=self.conv2.stride)
+        else:
+            target_grid = out.grid
 
         plan2 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid=out.grid)
+            self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid)
 
         out = self.conv2(out, plan=plan2)
         out = self.norm2(out)
         out = self.act2(out)
 
         if self.pooling is not None:
-            x = self.pooling(x, ref_coarse_data=downres_grid)
-        x = self.skip_connection(x)
+            x = self.pooling(x, coarse_data=downres_grid)
+        x: fVDBTensor = self.skip_connection(x)
+
+        if not self.disable_conv_output_padding:
+            new_x = out.grid.inject_from(x.grid, x.data, default_value=0.0)
+            x = fVDBTensor(out.grid, new_x, spatial_cache=out.spatial_cache)
+
         out: fVDBTensor = out + x
 
         curgrid, curdata, curspatial_cache = out.grid, out.data, out.spatial_cache
@@ -154,15 +174,20 @@ class BottleneckResBlock3DFVDB(nn.Module):
         base_width: int = 64,
         act_layer=SiLUFVDB,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
+        disable_conv_output_padding: bool = True,
         checkpointing=False,
     ) -> None:
         super(BottleneckResBlock3DFVDB, self).__init__()
         if norm_layer is None:
             def norm_layer(chs): return GroupNorm32FVDB(1, chs)
         self.checkpointing = checkpointing
+        self.disable_conv_output_padding = disable_conv_output_padding
+        
         width = int(planes * (base_width / 64.0)) * groups
 
-        self.conv1 = SparseConv3dFVDB(inplanes, width, 1, 1, bias=False)
+        # self.conv1 = SparseConv3dFVDB(
+        #   inplanes, width, 1, 1, bias=False, disable_conv_output_padding=True)
+        self.conv1 = LinearFVDB(inplanes, width, bias=False)
         self.norm1 = norm_layer(width)
         self.act1 = act_layer()
 
@@ -174,22 +199,26 @@ class BottleneckResBlock3DFVDB(nn.Module):
 
         conv2_stride = stride if pooling is None else 1
         self.conv2 = SparseConv3dFVDB(
-            width, width, 3, stride=conv2_stride, bias=True)
+            width, width, 3, stride=conv2_stride, bias=True,
+            disable_conv_output_padding=disable_conv_output_padding)
 
         # self.conv2 = conv3x3(width, width, stride, groups, dilation)
         self.norm2 = norm_layer(width)
         self.act2 = act_layer()
 
-        self.conv3 = SparseConv3dFVDB(
-            width, planes*self.expansion, 1, 1, bias=False)
+        # self.conv3 = SparseConv3dFVDB(
+        #     width, planes*self.expansion, 1, 1, bias=False,
+        #     disable_conv_output_padding=True)
+        self.conv3 = LinearFVDB(width, planes*self.expansion, bias=False)
         # self.conv3 = conv1x1(width, planes * self.expansion)
         self.norm3 = norm_layer(planes * self.expansion)
         self.act3 = act_layer()
 
         if stride != 1 or inplanes != planes*self.expansion:
             self.skip_connection = nn.Sequential(
-                SparseConv3dFVDB(
-                    inplanes, planes*self.expansion, 1, stride, bias=False),
+                # SparseConv3dFVDB(
+                #     inplanes, planes*self.expansion, 1, 1, bias=False),
+                LinearFVDB(inplanes, planes*self.expansion, bias=False),
                 norm_layer(planes*self.expansion)
             )
         else:
@@ -223,36 +252,46 @@ class BottleneckResBlock3DFVDB(nn.Module):
         x = fVDBTensor(grid, data, spatial_cache=spatial_cache)
         out = x.clone()
 
-        grid_padded = x.grid.conv_grid(
-            self.conv1.kernel_size, stride=self.conv1.stride)
-        plan1 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=grid_padded)
+        # grid_padded = x.grid.conv_grid(
+        #     self.conv1.kernel_size, stride=self.conv1.stride)
+        # plan1 = fvdb.ConvolutionPlan.from_grid_batch(
+        #     self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=x.grid)
 
-        out = self.conv1(out, plan=plan1)
+        out = self.conv1(out)
         out = self.norm1(out)
         out = self.act1(out)
 
         if self.pooling is not None:
-            out = self.pooling(out, ref_coarse_data=downres_grid)
+            out = self.pooling(out, coarse_data=downres_grid)
 
+        if not self.disable_conv_output_padding:
+            target_grid = out.grid.conv_grid(
+                self.conv2.kernel_size, stride=self.conv2.stride)
+        else:
+            target_grid = out.grid
         plan2 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid=out.grid)
+            self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid=target_grid)
 
         out = self.conv2(out, plan=plan2)
         out = self.norm2(out)
         out = self.act2(out)
 
-        plan3 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv3.kernel_size, self.conv3.stride, out.grid, target_grid=out.grid)
+        # plan3 = fvdb.ConvolutionPlan.from_grid_batch(
+        #     self.conv3.kernel_size, self.conv3.stride, out.grid, target_grid=out.grid)
 
-        out = self.conv3(out, plan=plan3)
+        out = self.conv3(out)
         out = self.norm3(out)
         out = self.act3(out)
 
         if self.pooling is not None:
-            x = self.pooling(out, ref_coarse_data=downres_grid)
+            x = self.pooling(out, coarse_data=downres_grid)
 
-        x = self.skip_connection(x)
+        x: fVDBTensor = self.skip_connection(x)
+
+        if not self.disable_conv_output_padding:
+            new_x = out.grid.inject_from(x.grid, x.data, default_value=0.0)
+            x = fVDBTensor(out.grid, new_x, spatial_cache=out.spatial_cache)
+
         out: fVDBTensor = out + x
 
         curgrid, curdata, curspatial_cache = out.grid, out.data, out.spatial_cache
@@ -270,7 +309,8 @@ class SparseConvOutputHeadFVDB(nn.Module):
         self.conv1 = SparseConv3dFVDB(in_channels, in_channels, 3, 1, bias=False)
         self.act1 = SiLUFVDB(inplace=True)
 
-        self.outconv = SparseConv3dFVDB(in_channels, out_channels, 1, bias=True)
+        # self.outconv = SparseConv3dFVDB(in_channels, out_channels, 1, bias=True)
+        self.outconv = LinearFVDB(in_channels, out_channels, bias=True)
 
     def forward(self, x: fVDBTensor):
         # if x.dtype != self.conv1.weight.dtype:
@@ -295,19 +335,20 @@ class SparseConvOutputHeadFVDB(nn.Module):
         x = fVDBTensor(grids, feats, spatial_cache=spatial_cache)
         out = self.norm1(x)
         # out = out.type(torch.float32)
-        grid_padded = x.grid.conv_grid(
-            self.conv1.kernel_size, stride=self.conv1.stride)
+        # grid_padded = x.grid.conv_grid(
+        #     self.conv1.kernel_size, stride=self.conv1.stride)
         plan1 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=grid_padded)
+            self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=x.grid)
 
         out = self.conv1(out, plan=plan1)
         out = self.act1(out)
 
-        plan2 = fvdb.ConvolutionPlan.from_grid_batch(
-            self.outconv.kernel_size, 
-            self.outconv.stride, out.grid, target_grid=out.grid)
+        # plan2 = fvdb.ConvolutionPlan.from_grid_batch(
+        #     self.outconv.kernel_size, 
+        #     self.outconv.stride, out.grid, target_grid=out.grid)
 
-        out: fVDBTensor = self.outconv(out, plan=plan2)
+        # out: fVDBTensor = self.outconv(out, plan=plan2)
+        out: fVDBTensor = self.outconv(out)
 
         out = out.type(x.dtype)
 

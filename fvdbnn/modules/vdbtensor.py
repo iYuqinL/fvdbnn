@@ -390,11 +390,11 @@ class fVDBTensor:
         return self.grid.num_leaf_nodes
 
     @property
-    def grid_to_world_matrices(self) -> torch.FloatTensor:
+    def voxel_to_world_matrices(self) -> torch.FloatTensor:
         return self.grid.voxel_to_world_matrices
 
     @property
-    def world_to_grid_matrices(self) -> torch.FloatTensor:
+    def world_to_voxel_matrices(self) -> torch.FloatTensor:
         return self.grid.world_to_voxel_matrices
 
     @property

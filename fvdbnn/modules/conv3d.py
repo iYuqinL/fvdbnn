@@ -34,9 +34,15 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
         kernel_size: int,
         stride: int = 1,
         bias: bool = True,
+        disable_conv_output_padding: bool = True,
     ):
         super(SparseConv3dFVDB, self).__init__(
             in_channels, out_channels, kernel_size, stride, bias)
+        self.disable_conv_output_padding = disable_conv_output_padding
+
+        self.weight.data = self.weight.data.contiguous()
+        if self.bias is not None:
+            self.bias.data = self.bias.data.contiguous()
 
     def forward(self, input: fVDBTensor,
                 plan: fvdb.ConvolutionPlan = None) -> fVDBTensor:
@@ -56,8 +62,12 @@ class SparseConv3dFVDB(fvdb.nn.SparseConv3d):
             plan = input.get_spatial_cache(conv_key)
             # print(f"\nconv3d_ks{self.kernel_size}_stride{self.stride} plan: {plan}")
             if plan is None:
+                if self.disable_conv_output_padding:
+                    target_grid = input.grid
+                else:
+                    target_grid = input.grid.conv_grid(self.kernel_size, self.stride)
                 plan = fvdb.ConvolutionPlan.from_grid_batch(
-                    self.kernel_size, self.stride, input.grid)
+                    self.kernel_size, self.stride, input.grid, target_grid=target_grid)
                 input.register_spatial_cache(conv_key, plan)
 
         if not plan.valid_usage(
