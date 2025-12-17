@@ -56,15 +56,15 @@ class BasicResBlock3DFVDB(nn.Module):
         self.checkpointing = checkpointing
         
         self.disable_conv_output_padding = disable_conv_output_padding
-
+        
+        self.norm1 = norm_layer(inplanes)
+        self.act1 = act_layer()
         midplanes = planes if midplanes is None else midplanes
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         conv1_stride = stride if pooling is None else 1
         self.conv1 = SparseConv3dFVDB(
             inplanes, midplanes, 3, stride=conv1_stride, bias=False, 
             disable_conv_output_padding=disable_conv_output_padding)
-        self.norm1 = norm_layer(midplanes)
-        self.act1 = act_layer()
 
         self.pooling = None
         if (stride != 1) and (pooling is not None):
@@ -72,11 +72,11 @@ class BasicResBlock3DFVDB(nn.Module):
             pooling_cls = MaxPoolFVDB if pooling == "max" else AvgPoolFVDB
             self.pooling = pooling_cls(kernel_size=stride)
 
+        self.norm2 = norm_layer(midplanes)
+        self.act2 = act_layer()
         self.conv2 = SparseConv3dFVDB(
             midplanes, planes, 3, stride=1, bias=False, 
             disable_conv_output_padding=disable_conv_output_padding)
-        self.norm2 = norm_layer(planes)
-        self.act2 = act_layer()
 
         if stride != 1 or inplanes != planes*self.expansion:
             self.skip_connection = nn.Sequential(
@@ -122,9 +122,10 @@ class BasicResBlock3DFVDB(nn.Module):
             target_grid = x.grid
         plan1 = fvdb.ConvolutionPlan.from_grid_batch(
             self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid)
-        out = self.conv1(out, plan=plan1)
         out = self.norm1(out)
         out = self.act1(out)
+        out = self.conv1(out, plan=plan1)
+
         if self.pooling is not None:
             out = self.pooling(out, coarse_data=downres_grid)
 
@@ -136,10 +137,9 @@ class BasicResBlock3DFVDB(nn.Module):
 
         plan2 = fvdb.ConvolutionPlan.from_grid_batch(
             self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid)
-
-        out = self.conv2(out, plan=plan2)
         out = self.norm2(out)
         out = self.act2(out)
+        out = self.conv2(out, plan=plan2)
 
         if self.pooling is not None:
             x = self.pooling(x, coarse_data=downres_grid)
@@ -185,11 +185,11 @@ class BottleneckResBlock3DFVDB(nn.Module):
         
         width = int(planes * (base_width / 64.0)) * groups
 
+        self.norm1 = norm_layer(inplanes)
+        self.act1 = act_layer()
         # self.conv1 = SparseConv3dFVDB(
         #   inplanes, width, 1, 1, bias=False, disable_conv_output_padding=True)
         self.conv1 = LinearFVDB(inplanes, width, bias=False)
-        self.norm1 = norm_layer(width)
-        self.act1 = act_layer()
 
         self.pooling = None
         if (stride != 1) and (pooling is not None):
@@ -197,22 +197,21 @@ class BottleneckResBlock3DFVDB(nn.Module):
             pooling_cls = MaxPoolFVDB if pooling == "max" else AvgPoolFVDB
             self.pooling = pooling_cls(kernel_size=stride)
 
+        self.norm2 = norm_layer(width)
+        self.act2 = act_layer()
         conv2_stride = stride if pooling is None else 1
         self.conv2 = SparseConv3dFVDB(
             width, width, 3, stride=conv2_stride, bias=True,
             disable_conv_output_padding=disable_conv_output_padding)
-
         # self.conv2 = conv3x3(width, width, stride, groups, dilation)
-        self.norm2 = norm_layer(width)
-        self.act2 = act_layer()
 
+        self.norm3 = norm_layer(width)
+        self.act3 = act_layer()
         # self.conv3 = SparseConv3dFVDB(
         #     width, planes*self.expansion, 1, 1, bias=False,
         #     disable_conv_output_padding=True)
         self.conv3 = LinearFVDB(width, planes*self.expansion, bias=False)
         # self.conv3 = conv1x1(width, planes * self.expansion)
-        self.norm3 = norm_layer(planes * self.expansion)
-        self.act3 = act_layer()
 
         if stride != 1 or inplanes != planes*self.expansion:
             self.skip_connection = nn.Sequential(
@@ -257,9 +256,10 @@ class BottleneckResBlock3DFVDB(nn.Module):
         # plan1 = fvdb.ConvolutionPlan.from_grid_batch(
         #     self.conv1.kernel_size, self.conv1.stride, x.grid, target_grid=x.grid)
 
-        out = self.conv1(out)
+        # resnet v2
         out = self.norm1(out)
         out = self.act1(out)
+        out = self.conv1(out)
 
         if self.pooling is not None:
             out = self.pooling(out, coarse_data=downres_grid)
@@ -272,19 +272,18 @@ class BottleneckResBlock3DFVDB(nn.Module):
         plan2 = fvdb.ConvolutionPlan.from_grid_batch(
             self.conv2.kernel_size, self.conv2.stride, out.grid, target_grid=target_grid)
 
-        out = self.conv2(out, plan=plan2)
         out = self.norm2(out)
         out = self.act2(out)
+        out = self.conv2(out, plan=plan2)
 
         # plan3 = fvdb.ConvolutionPlan.from_grid_batch(
         #     self.conv3.kernel_size, self.conv3.stride, out.grid, target_grid=out.grid)
-
-        out = self.conv3(out)
         out = self.norm3(out)
         out = self.act3(out)
+        out = self.conv3(out)
 
         if self.pooling is not None:
-            x = self.pooling(out, coarse_data=downres_grid)
+            x = self.pooling(x, coarse_data=downres_grid)
 
         x: fVDBTensor = self.skip_connection(x)
 
