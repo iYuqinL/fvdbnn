@@ -16,13 +16,21 @@
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
 ###
-from typing import Optional, Callable
+from typing import Optional, Callable, Union, Literal
 import torch
 import torch.nn as nn
 
 import fvdb
 
-from . import fVDBTensor, LinearFVDB
+from .vdbtensor import fVDBTensor
+from .linear import LinearFVDB
+from .conv3d import SparseConv3dFVDB
+
+
+__all__ = [
+    "DownSamplingSpatial2ChannelFVDB",
+    "UpSamplingChannel2SpatialFVDB"
+]
 
 
 class DownSamplingSpatial2ChannelFVDB(nn.Module):
@@ -32,6 +40,8 @@ class DownSamplingSpatial2ChannelFVDB(nn.Module):
         in_channels: int = None,
         middle_channels: int = None,
         out_channels: int = None,
+        middle_proj_type: Literal["linear", "conv"] = "linear",
+        out_proj_type: Literal["linear", "conv"] = "linear",
     ):
         super(DownSamplingSpatial2ChannelFVDB, self).__init__()
         self.scale_factor = scale_factor
@@ -46,13 +56,36 @@ class DownSamplingSpatial2ChannelFVDB(nn.Module):
                 self.out_channels = self.in_channels
             cur_inchs = self.in_channels
             if self.middle_channels is not None:
-                self.middle_proj = LinearFVDB(cur_inchs, middle_channels, bias=False)
+                if middle_proj_type == "linear":
+                    self.middle_proj = LinearFVDB(cur_inchs, middle_channels, bias=False)
+                elif middle_proj_type == "conv":
+                    self.middle_proj = SparseConv3dFVDB(
+                        cur_inchs, middle_channels, 3, 1, bias=False)
+                else:
+                    raise ValueError(f"Unknown middle_proj_type {middle_proj_type}")
+
                 cur_inchs = middle_channels
 
-            self.out_proj = LinearFVDB(cur_inchs, out_channels, bias=False)
+            S = self.scale_factor ** 3
+            if out_proj_type == "linear":
+                self.out_proj = LinearFVDB(cur_inchs*S, out_channels, bias=False)
+            elif out_proj_type == "conv":
+                self.out_proj = SparseConv3dFVDB(
+                    cur_inchs*S, out_channels, 3, 1, bias=False)
+            else:
+                raise ValueError(f"Unknown channel_proj_type {out_proj_type}")
 
-    def forward(self, x: fVDBTensor):
+    def forward(
+        self,
+        x: fVDBTensor, 
+        coarse_data: Union[fvdb.GridBatch, fVDBTensor] = None
+    ):
         """
+        Args:
+            x (fVDBTensor): Input sparse tensor, ([n1,n2,...], in_channels)
+            coarse_data (Union[fvdb.GridBatch, fVDBTensor]): Coarse grid, ([N1,N2,...],)
+        Returns:
+            (fVDBTensor): Output sparse tensor, ([N1,N2,...], out_channels)
         """
         if self.in_channels is not None and self.middle_channels is not None:
             x: fVDBTensor = self.middle_proj(x)
@@ -67,7 +100,16 @@ class DownSamplingSpatial2ChannelFVDB(nn.Module):
         assert torch.all(in_index[1:] > in_index[:-1]), (
             f"input grid must be sorted in canonical order got {in_index[:10]} ...")
 
-        down_grid = in_grid.coarsened_grid(self.scale_factor)
+        down_grid = None
+        if coarse_data is not None:
+            assert isinstance(coarse_data, (fvdb.GridBatch, fVDBTensor)), (
+                f"coarse_data type error, got {type(coarse_data)}")
+            down_grid = coarse_data
+            if isinstance(coarse_data, fVDBTensor):
+                down_grid = coarse_data.grid
+
+        if down_grid is None:
+            down_grid = in_grid.coarsened_grid(self.scale_factor)
 
         up_ijk = in_grid.ijk.float()
         down_ijk = (up_ijk / self.scale_factor).floor()
@@ -121,6 +163,8 @@ class UpSamplingChannel2SpatialFVDB(nn.Module):
         in_channels: int = None,
         middle_channels: int = None,
         out_channels: int = None,
+        middle_proj_type: Literal["linear", "conv"] = "linear",
+        out_proj_type: Literal["linear", "conv"] = "linear",
     ):
         super(UpSamplingChannel2SpatialFVDB, self).__init__()
         self.scale_factor = scale_factor
@@ -135,16 +179,49 @@ class UpSamplingChannel2SpatialFVDB(nn.Module):
                 self.out_channels = self.in_channels
             cur_inchs = self.in_channels
             if self.middle_channels is not None:
-                self.middle_proj = LinearFVDB(cur_inchs, middle_channels, bias=False)
+                if middle_proj_type == "linear":
+                    self.middle_proj = LinearFVDB(cur_inchs, middle_channels, bias=False)
+                elif middle_proj_type == "conv":
+                    self.middle_proj = SparseConv3dFVDB(
+                        cur_inchs, middle_channels, 3, 1, bias=False)
+                else:
+                    raise ValueError(f"Unknown middle_proj_type {middle_proj_type}")
                 cur_inchs = middle_channels
 
-            self.out_proj = LinearFVDB(cur_inchs, out_channels, bias=False)
+            S = self.scale_factor ** 3
+            if out_proj_type == "linear":
+                self.out_proj = LinearFVDB(cur_inchs//S, out_channels, bias=False)
+            elif out_proj_type == "conv":
+                self.out_proj = SparseConv3dFVDB(
+                    cur_inchs//S, out_channels, 3, 1, bias=False)
+            else:
+                raise ValueError(f"Unknown out_proj_type {out_proj_type}")
 
-    def forward(self, x: fVDBTensor):
+    def forward(
+        self,
+        x: fVDBTensor,
+        mask: fvdb.JaggedTensor = None,
+        fine_data: Union[fVDBTensor, fvdb.GridBatch] = None,
+        fine_mask: Union[fVDBTensor, fvdb.JaggedTensor] = None
+    ):
         """
+        Args:
+            x (fVDBTensor): Input sparse tensor, ([n1,n2,...], in_channels)
+            mask (fvdb.JaggedTensor): Input mask, ([n1,n2,...],)
+            fine_data (Union[fVDBTensor, fvdb.GridBatch]): Fine grid, ([N1,N2,...],)
+            fine_mask (Union[fVDBTensor, fvdb.JaggedTensor]): Fine grid mask, ([N1,N2,...],)
+        Returns:
+            (fVDBTensor): Output sparse tensor, ([N1,N2,...], out_channels)
         """
         if self.in_channels is not None and self.middle_channels is not None:
             x: fVDBTensor = self.middle_proj(x)
+
+        if mask is not None:
+            assert isinstance(mask, fvdb.JaggedTensor), (
+                f"mask must be a jagged tensor, got {type(mask)}")
+            x_data, x_grid = x.grid.refine(subdiv_factor=1, data=x.data, mask=mask)
+            x = fVDBTensor(x_grid, x_data, spatial_cache=x.spatial_cache)
+
         in_index = x.grid.ijk_to_index(x.grid.ijk.int(), cumulative=True).jdata
         assert torch.all(in_index[1:] > in_index[:-1]), (
             f"input grid must be monotonically increasing, got {in_index[:10]} ...")
@@ -154,7 +231,23 @@ class UpSamplingChannel2SpatialFVDB(nn.Module):
         # device, dtype = in_data.device, in_data.dtype
         S = self.scale_factor ** 3
 
-        up_grid = in_grid.refined_grid(subdiv_factor=self.scale_factor)
+        up_grid = None
+        if fine_data is not None:
+            assert isinstance(fine_data, (fVDBTensor, fvdb.GridBatch)), (
+                f"fine_data must be a fVDBTensor or GridBatch, got {type(fine_data)}")
+            up_grid = fine_data.grid if isinstance(fine_data, fVDBTensor) else fine_data
+
+        if up_grid is None and fine_mask is not None:
+            if isinstance(fine_mask, fVDBTensor):
+                fine_mask = fine_mask.data
+            assert isinstance(fine_mask, fvdb.JaggedTensor), (
+                f"fine_mask must be a jagged tensor, got {type(fine_mask)}")
+            up_grid = in_grid.refined_grid(subdiv_factor=self.scale_factor)
+            up_grid = up_grid.refined_grid(subdiv_factor=1, mask=fine_mask)
+
+        if up_grid is None:
+            up_grid = in_grid.refined_grid(subdiv_factor=self.scale_factor)
+
         up_index = up_grid.ijk_to_index(up_grid.ijk, cumulative=True).jdata
         assert torch.all(up_index[1:] - up_index[:-1] > 0), (
             f"up_index must be monotonically increasing, but got {up_index[:10]}...")

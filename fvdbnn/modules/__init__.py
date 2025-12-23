@@ -23,3 +23,4 @@ from .dropout import *
 from .linear import *
 from .normalize import *
 from .pooling import *
+from .spatial2ch import *
