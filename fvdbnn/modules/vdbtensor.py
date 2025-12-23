@@ -63,8 +63,10 @@ class fVDBTensor:
             raise ValueError("grid and feature should have the same total voxel count")
 
     def __getitem__(self, idx):
-        return fVDBTensor(self.grid[idx], self.data[idx],
-                         spatial_cache=self.spatial_cache)
+        grid_i = self.grid[idx]
+        data_i = self.data[idx]
+        data_i = grid_i.jagged_like(data_i.jdata)
+        return fVDBTensor(grid_i, data_i, spatial_cache=self.spatial_cache)
 
     def __len__(self):
         return self.grid.grid_count
