@@ -305,6 +305,117 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
         return x.grid, x.data, x.spatial_cache
 
 
+
+class CrossAttnTransformerBlockFVDB(nn.Module):
+    def __init__(
+        self,
+        emb_dim: int,
+        context_emb_dim: int,
+        num_heads: int,
+        bias: bool = True,
+        kv_bias: bool = True,
+        qk_rmsnorm: bool = False,
+        ln_affine: Union[bool, list[bool]] = False,
+        attn_dropout: float = 0.0,
+        attn_outproj_dropout: float = 0.0,
+        attn_mode: Literal["full", "swin"] = "full",
+        attn_window_size: int = None,
+        attn_window_shift: int = None,
+        ffn_ratio: float = 4.0,
+        ffn_outdim: int = None,
+        ffn_bias: bool = True,
+        ffn_dropout: float = 0.0,
+        ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
+        use_rope: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        eps: float = 1e-6,
+        **kwargs
+    ):
+        super(CrossAttnTransformerBlockFVDB, self).__init__()
+        self.checkpointing = checkpointing
+        self.attn_mode = attn_mode
+        self.attn_window_size = attn_window_size
+        self.attn_window_shift = attn_window_shift
+
+        assert self.attn_mode in ["full"], (
+            f"only support attn_mode 'full' Now, but got {self.attn_mode}")
+
+        if not isinstance(ln_affine, (tuple, list)):
+            assert isinstance(ln_affine, bool), "ln_affine must be bool or ist of bool"
+            ln_affine = [ln_affine] * 3
+        assert len(ln_affine) >= 2, (
+            f"ln_affine must have at least 2 elements, got {ln_affine}")
+        
+        self.norm1 = LayerNorm32FVDB(emb_dim, elementwise_affine=ln_affine[0], eps=eps)
+        
+        self.cross_attn = MultiheadFlashAttnFVDB(
+            emb_dim,
+            num_heads=num_heads,
+            bias=bias,
+            kv_bias=kv_bias,
+            kdim=context_emb_dim,
+            vdim=context_emb_dim,
+            sure_cross_attn=True,
+            kv_is_same_token=True,
+            qk_rmsnorm=qk_rmsnorm,
+            attn_drop=attn_dropout,
+            proj_drop=attn_outproj_dropout,
+            use_rope=use_rope,
+            device=device,
+            dtype=dtype
+        )
+
+        self.norm2 = LayerNorm32FVDB(emb_dim, elementwise_affine=ln_affine[1], eps=eps)
+        self.mlp = FeedForwardNetworkFVDB(
+            in_features=emb_dim,
+            hidden_ratio=ffn_ratio,
+            bias=ffn_bias,
+            out_features=ffn_outdim,
+            activation=ffn_activation,
+            dropout=ffn_dropout,
+            device=device,
+            dtype=dtype
+        )
+
+    def forward(
+        self,
+        x: fVDBTensor,
+        context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
+    ) -> fVDBTensor:
+        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        if self.checkpointing and self.training:
+            grid, data, spatial_cache = gradient_checkpoint(
+                self._forward, grid, data, context, spatial_cache, use_reentrant=False)
+        else:
+            grid, data, spatial_cache = (
+                self._forward(grid, data, context, spatial_cache))
+
+        x = fVDBTensor(grid, data, spatial_cache)
+        return x
+
+    def _forward(
+        self,
+        grid: fvdb.GridBatch,
+        data: fvdb.JaggedTensor,
+        context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
+        spatial_cache: dict = None
+    ):
+        x = fVDBTensor(grid, data, spatial_cache)
+
+        h = self.norm1(x)
+        h = self.attn(h, context)
+        x = x + h
+
+        h = self.norm2(x)
+        h = self.mlp(h)
+        x: fVDBTensor = x + h
+
+        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        return grid, data, spatial_cache
+
+
 class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
     def __init__(self,
                  emb_dim: int,

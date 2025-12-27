@@ -32,7 +32,8 @@ class LinearFVDB(ElementwiseMixin, nn.Linear):
     Applies a linear transformation to the incoming data: :math:`y = xA^T + b`.
     """
     def forward(self, input: fVDBTensor) -> fVDBTensor:
-        assert isinstance(input, fVDBTensor), "Input should have type fVDBTensor"
+        assert isinstance(input, fVDBTensor), (
+            f"Input should have type fVDBTensor, but got {type(input)}")
         intype = input.data.jdata.dtype
         weight = (self.weight.to(dtype=intype)
                   if intype != self.weight.dtype else self.weight)

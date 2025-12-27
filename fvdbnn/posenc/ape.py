@@ -4,11 +4,11 @@
 # Created Date: Sunday, November 16th 2025, 12:15:02 am
 # Author: iYuqinL
 # -----
-# Last Modified: 
-# Modified By: 
+# Last Modified:
+# Modified By:
 # -----
 # Copyright © 2025 iYuqinL Holding Limited
-# 
+#
 # All shall be well and all shall be well and all manner of things shall be well.
 # Nope...we're doomed!
 # -----
@@ -22,7 +22,6 @@ import torch.nn as nn
 __all__ = ['AbsolutePositionEmbedder']
 
 
-
 class AbsolutePositionEmbedder(nn.Module):
     """
     Embeds spatial positions into vector representations using a sinusoidal approach.
@@ -30,6 +29,7 @@ class AbsolutePositionEmbedder(nn.Module):
     This implementation is a generalization of the standard sinusoidal positional 
     encoding for D-dim coordinates, supporting batched inputs of shape (..., N, D).
     """
+
     def __init__(self, channels: int, in_channels: int = 3):
         """
         Initializes the AbsolutePositionEmbedder.
@@ -44,11 +44,11 @@ class AbsolutePositionEmbedder(nn.Module):
 
         # Calculate the number of frequency terms per spatial coordinate value.
         # Total output dimension (channels) must be >= in_channels * 2 * freq_dim
-        # Note: The implementation means 2 * freq_dim is the embedding size 
+        # Note: The implementation means 2 * freq_dim is the embedding size
         #       for a single coordinate value (x, or y, or z, etc.)
         self.freq_dim = channels // in_channels // 2
         if self.freq_dim == 0:
-            # If the output dimension is not large enough, 
+            # If the output dimension is not large enough,
             # we set a minimal embedding size.
             # Truncation/Padding logic in forward will handle dimension mismatch.
             # We enforce a minimal dimension of 1 for freq_dim to avoid division by zero
@@ -65,6 +65,7 @@ class AbsolutePositionEmbedder(nn.Module):
         # freqs = 1 / (10000^(2i / D_model))
         self.freqs = 1.0 / (10000 ** self.freqs)
 
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
     def _sin_cos_embedding(self, x: torch.Tensor) -> torch.Tensor:
         """
         Create sinusoidal position embeddings.
@@ -82,6 +83,7 @@ class AbsolutePositionEmbedder(nn.Module):
         out = torch.cat([torch.sin(out), torch.cos(out)], dim=-1)
         return out
 
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Generates absolute positional embeddings, supporting batched inputs.
@@ -89,7 +91,7 @@ class AbsolutePositionEmbedder(nn.Module):
 
         Args:
             x (torch.Tensor): (..., N, D) tensor of spatial positions, D is in_channels.
-        
+
         Returns:
             torch.Tensor: (..., N, channels) tensor of positional embeddings.
         """
@@ -101,13 +103,13 @@ class AbsolutePositionEmbedder(nn.Module):
         original_shape_without_D = batch_dims + [N]
 
         # 2. Reshape Input: (..., N, D) -> (Total Elements, D)
-        x_flat = x.reshape(-1, D)
+        x_flat = x.reshape(-1, D).to(torch.float32)
         Total_Elements, _ = x_flat.shape
-        
+
         # 3. Apply Embedding Logic (Identical to your original forward)
         # Flattens all coordinate values into a single stream
         embed_flat_coords = self._sin_cos_embedding(x_flat.reshape(-1))
-        
+
         # Reshapes back to (Total Elements, D * (2 * freq_dim))
         embed_flat_positions = embed_flat_coords.reshape(Total_Elements, -1)
 
