@@ -60,8 +60,8 @@ class BasicResBlock3DFVDB(nn.Module):
         self.norm1 = norm_layer(inplanes)
         self.act1 = act_layer()
         midplanes = planes if midplanes is None else midplanes
-        # if pooling is not None and pooling in ["s2c"]:
-        #     midplanes = midplanes // 2
+        if pooling is not None and pooling in ["s2c"]:
+            midplanes = min(midplanes, inplanes)
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         conv1_stride = stride if pooling is None else 1
         self.conv1 = SparseConv3dFVDB(
