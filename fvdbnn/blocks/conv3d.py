@@ -60,8 +60,9 @@ class BasicResBlock3DFVDB(nn.Module):
         self.norm1 = norm_layer(inplanes)
         self.act1 = act_layer()
         midplanes = planes if midplanes is None else midplanes
-        if pooling is not None and pooling in ["s2c"]:
-            midplanes = min(midplanes, inplanes)
+        ori_midplanes = midplanes
+        # if pooling is not None and pooling in ["s2c"]:
+        #     midplanes = min(midplanes, inplanes)
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         conv1_stride = stride if pooling is None else 1
         self.conv1 = SparseConv3dFVDB(
@@ -72,8 +73,11 @@ class BasicResBlock3DFVDB(nn.Module):
         if (stride != 1) and (pooling is not None):
             assert pooling in ["avg", "max", "s2c"], f"pooling={pooling}"
             if pooling == "s2c":
-                self.pooling = DownSamplingSpatial2ChannelFVDB(stride)
-                midplanes = midplanes * 8
+                self.pooling = DownSamplingSpatial2ChannelFVDB(
+                    scale_factor=stride, in_channels=midplanes,
+                    middle_channels=midplanes//4, out_channels=midplanes,
+                    middle_proj_type="conv", out_proj_type="conv")
+                midplanes = midplanes # * 8
             else:
                 pooling_cls = MaxPoolFVDB if pooling == "max" else AvgPoolFVDB
                 self.pooling = pooling_cls(kernel_size=stride)
@@ -85,7 +89,10 @@ class BasicResBlock3DFVDB(nn.Module):
             disable_conv_output_padding=disable_conv_output_padding)
 
         if stride != 1 or inplanes != planes*self.expansion:
-            inplanes_mul = 8 if self.pooling_type == "s2c" else 1
+            inplanes_mul = 1
+            if self.pooling_type == "s2c" and stride != 1:
+                self.skip_pooling = DownSamplingSpatial2ChannelFVDB(scale_factor=stride)
+                inplanes_mul = 8
             self.skip_connection = nn.Sequential(
                 # SparseConv3dFVDB(
                 #     inplanes, planes*self.expansion, 1, 1, bias=False),
@@ -148,8 +155,10 @@ class BasicResBlock3DFVDB(nn.Module):
         out = self.act2(out)
         out = self.conv2(out, plan=plan2)
 
-        if self.pooling is not None:
+        if ((self.pooling is not None) and (self.pooling_type != "s2c")):
             x = self.pooling(x, coarse_data=downres_grid)
+        elif ((self.pooling_type == "s2c") and hasattr(self, "skip_pooling")):
+            x = self.skip_pooling(x, coarse_data=downres_grid)
         x: fVDBTensor = self.skip_connection(x)
 
         if not self.disable_conv_output_padding:
@@ -192,7 +201,7 @@ class BottleneckResBlock3DFVDB(nn.Module):
         self.pooling_type = pooling
 
         width = int(planes * (base_width / 64.0)) * groups
-        ori_width = width
+        orig_width = width
         # if pooling == "s2c":
         #     width = int(width / 2)
 
@@ -206,8 +215,11 @@ class BottleneckResBlock3DFVDB(nn.Module):
         if (stride != 1) and (pooling is not None):
             assert pooling in ["avg", "max", "s2c"]
             if pooling == "s2c":
-                self.pooling = DownSamplingSpatial2ChannelFVDB(stride)
-                width = width * 8
+                self.pooling = DownSamplingSpatial2ChannelFVDB(
+                    scale_factor=stride, in_channels=width,
+                    middle_channels=width, out_channels=width, 
+                    middle_proj_type="conv", out_proj_type="conv")
+                width = width  # * 8
             else:
                 pooling_cls = MaxPoolFVDB if pooling == "max" else AvgPoolFVDB
                 self.pooling = pooling_cls(kernel_size=stride)
@@ -229,7 +241,10 @@ class BottleneckResBlock3DFVDB(nn.Module):
         # self.conv3 = conv1x1(width, planes * self.expansion)
 
         if stride != 1 or inplanes != planes*self.expansion:
-            inplanes_mul = 8 if self.pooling_type == "s2c" else 1
+            inplanes_mul = 1
+            if self.pooling_type == "s2c" and stride != 1:
+                self.skip_pooling = DownSamplingSpatial2ChannelFVDB(scale_factor=stride)
+                inplanes_mul = 8
             self.skip_connection = nn.Sequential(
                 # SparseConv3dFVDB(
                 #     inplanes, planes*self.expansion, 1, 1, bias=False),
@@ -298,8 +313,10 @@ class BottleneckResBlock3DFVDB(nn.Module):
         out = self.act3(out)
         out = self.conv3(out)
 
-        if self.pooling is not None:
+        if ((self.pooling is not None) and (self.pooling_type != "s2c")):
             x = self.pooling(x, coarse_data=downres_grid)
+        elif ((self.pooling_type == "s2c") and hasattr(self, "skip_pooling")):
+            x = self.skip_pooling(x, coarse_data=downres_grid)
 
         x: fVDBTensor = self.skip_connection(x)
 
