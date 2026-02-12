@@ -20,6 +20,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from ..modules.linear import Cast2IntypeLinear
+
 __all__ = ['TimestepEmbedder']
 
 
@@ -50,9 +52,9 @@ class TimestepEmbedder(nn.Module):
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super(TimestepEmbedder, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            Cast2IntypeLinear(frequency_embedding_size, hidden_size, bias=True),
             nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size, bias=True),
+            Cast2IntypeLinear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
 

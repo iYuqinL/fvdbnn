@@ -488,8 +488,16 @@ def fVDBTensor_from_dense(
 def jcat(things_to_cat, dim=None):
     if len(things_to_cat) == 0:
         raise ValueError("Cannot concatenate empty list")
-    if isinstance(things_to_cat[0], (GridBatch, JaggedTensor)):
+
+    if isinstance(things_to_cat[0], GridBatch):
         return fvdb.jcat(things_to_cat, dim=dim)
+    if isinstance(things_to_cat[0], fvdb.JaggedTensor):
+        cpp_jtensor = fvdb.jcat(things_to_cat, dim=dim)
+        # print(f"in fvdbnn jcat, type={type(cpp_jtensor)}")
+        if isinstance(cpp_jtensor, fvdb._fvdb_cpp.JaggedTensor):
+            return fvdb.JaggedTensor(impl=cpp_jtensor)
+        else:
+            return cpp_jtensor
     elif isinstance(things_to_cat[0], fVDBTensor):
         if dim == 0:
             raise ValueError("VDBTensor concatenation does not support dim=0")
@@ -499,6 +507,8 @@ def jcat(things_to_cat, dim=None):
         # if you pass in grids with mismatching topology.
         grid = fvdb.jcat(grids) if dim == None else grids[0]
         data = fvdb.jcat(datas, dim)
+        if isinstance(data, fvdb._fvdb_cpp.JaggedTensor):
+            data = fvdb.JaggedTensor(impl=data)
         return fVDBTensor(grid, data)
     else:
         raise ValueError("jcat() can only cat GridBatch, JaggedTensor, or fVDBTensor")
