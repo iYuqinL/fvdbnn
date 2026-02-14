@@ -29,7 +29,8 @@ from fvdb.types import Vec3dBatch, Vec3dBatchOrScalar, Vec3i
 JaggedTensorOrTensor = Union[torch.Tensor, JaggedTensor]
 
 
-__all__ = ["fVDBTensor", "fVDBTensor_from_dense", "jcat"]
+__all__ = ["fVDBTensor", "fVDBTensor_from_dense", 
+           "jcat", "zeros_like", "ones_like"]
 
 
 @dataclass
@@ -512,3 +513,45 @@ def jcat(things_to_cat, dim=None):
         return fVDBTensor(grid, data)
     else:
         raise ValueError("jcat() can only cat GridBatch, JaggedTensor, or fVDBTensor")
+
+
+def zeros_like(
+    tensor: Union[torch.Tensor, fVDBTensor, fvdb.JaggedTensor]
+) -> Union[torch.Tensor, fVDBTensor, fvdb.JaggedTensor]:
+    if isinstance(tensor, torch.Tensor):
+        return torch.zeros_like(tensor)
+    elif isinstance(tensor, fvdb.JaggedTensor):
+        zeros_t = torch.zeros_like(tensor.jdata)
+        tensor_zeros = tensor.clone()
+        tensor_zeros.jdata = zeros_t
+        return tensor_zeros
+    elif isinstance(tensor, fVDBTensor):
+        zeros_data = torch.zeros_like(tensor.data.jdata)
+        data_zeros = tensor.data.clone()
+        data_zeros.jdata = zeros_data
+        zeros_tensor = fVDBTensor(
+            tensor.grid, data_zeros, spatial_cache=tensor.spatial_cache)
+        return zeros_tensor
+    else:
+        raise ValueError("zeros_like() can only handle torch.Tensor or fVDBTensor")
+
+
+def ones_like(
+    tensor: Union[torch.Tensor, fVDBTensor, fvdb.JaggedTensor]
+) -> Union[torch.Tensor, fVDBTensor, fvdb.JaggedTensor]:
+    if isinstance(tensor, torch.Tensor):
+        return torch.ones_like(tensor)
+    elif isinstance(tensor, fvdb.JaggedTensor):
+        ones_t = torch.ones_like(tensor.jdata)
+        tensor_ones = tensor.clone()
+        tensor_ones.jdata = ones_t
+        return tensor_ones
+    elif isinstance(tensor, fVDBTensor):
+        ones_data = torch.ones_like(tensor.data.jdata)
+        data_ones = tensor.data.clone()
+        data_ones.jdata = ones_data
+        ones_tensor = fVDBTensor(
+            tensor.grid, data_ones, spatial_cache=tensor.spatial_cache)
+        return ones_tensor
+    else:
+        raise ValueError("ones_like() can only handle torch.Tensor or fVDBTensor")
