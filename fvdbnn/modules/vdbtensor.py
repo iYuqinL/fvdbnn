@@ -555,3 +555,48 @@ def ones_like(
         return ones_tensor
     else:
         raise ValueError("ones_like() can only handle torch.Tensor or fVDBTensor")
+
+
+# ---------------------------------------------------------------------------
+# Pytree registration — lets FSDP2 / torch.compile discover torch.Tensor
+# leaves inside JaggedTensor and fVDBTensor.
+# ---------------------------------------------------------------------------
+import torch.utils._pytree as _pytree
+
+
+def _jaggedtensor_flatten(jt: JaggedTensor):
+    return [jt.jdata], (jt.joffsets,)
+
+
+def _jaggedtensor_unflatten(children, context):
+    jdata = children[0]
+    if not isinstance(jdata, torch.Tensor):
+        return jdata
+    (joffsets,) = context
+    return JaggedTensor.from_data_and_offsets(jdata, joffsets)
+
+
+def _fvdbtensor_flatten(vt: fVDBTensor):
+    return [vt.data.jdata], (vt.grid, vt.data.joffsets, vt.spatial_cache)
+
+
+def _fvdbtensor_unflatten(children, context):
+    jdata = children[0]
+    if not isinstance(jdata, torch.Tensor):
+        return jdata
+    grid, joffsets, spatial_cache = context
+    data = JaggedTensor.from_data_and_offsets(jdata, joffsets)
+    return fVDBTensor(grid, data, spatial_cache=spatial_cache)
+
+
+try:
+    _pytree.register_pytree_node(
+        JaggedTensor, _jaggedtensor_flatten, _jaggedtensor_unflatten)
+except ValueError:
+    pass
+
+try:
+    _pytree.register_pytree_node(
+        fVDBTensor, _fvdbtensor_flatten, _fvdbtensor_unflatten)
+except ValueError:
+    pass
