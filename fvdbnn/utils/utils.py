@@ -121,37 +121,36 @@ def check_same_grid(
     strict: bool = True,
 ):
     """
-    Check if two grids are the same.
-    
+    Check if two grids are structurally equivalent.
+
     Args:
-        grid1 (fvdb.GridBatch): First grid batch.
-        grid2 (fvdb.GridBatch): Second grid batch.
+        grid1: First grid batch or fVDBTensor.
+        grid2: Second grid batch or fVDBTensor.
+        strict: If False, skip per-voxel ijk comparison.
+
+    Returns:
+        True if the two grids have the same structure.
     """
     if isinstance(grid1, fVDBTensor):
         grid1 = grid1.grid
     if isinstance(grid2, fVDBTensor):
         grid2 = grid2.grid
-    
-    # check grid_count
+
     if grid1.grid_count != grid2.grid_count:
         return False
-    # check total voxels
     if grid1.total_voxels != grid2.total_voxels:
         return False
-    # check grid_size
-    if (grid1.voxel_sizes != grid2.voxel_sizes).all():
+    if not torch.equal(grid1.num_voxels, grid2.num_voxels):
         return False
-    # check grid_origin
-    if (grid1.origins != grid2.origins).all():
+    if not torch.allclose(grid1.voxel_sizes, grid2.voxel_sizes):
         return False
-    # check each grid voxels number
-    if (grid1.num_voxels != grid2.num_voxels).all():
+    if not torch.allclose(grid1.origins, grid2.origins):
         return False
-    
+
     if not strict:
         return True
-    
-    if (grid1.ijk.jdata != grid2.ijk.jdata).all():
+
+    if not torch.equal(grid1.ijk.jdata, grid2.ijk.jdata):
         return False
-    
+
     return True

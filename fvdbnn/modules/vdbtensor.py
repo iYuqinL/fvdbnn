@@ -57,7 +57,7 @@ class fVDBTensor:
         if isinstance(self.data, JaggedTensorCpp):
             self.data = JaggedTensor(impl=self.data)
         if not isinstance(self.data, JaggedTensor):
-            raise TypeError("data must be a JaggedTensor or a torch.Tensor")
+            raise TypeError(f"data must be a JaggedTensor, got {type(self.data)}")
         if self.grid.grid_count != len(self.data):
             raise ValueError("grid and feature should have the same batch size")
         if self.grid.total_voxels != self.data.jdata.size(0):
@@ -533,7 +533,9 @@ def zeros_like(
             tensor.grid, data_zeros, spatial_cache=tensor.spatial_cache)
         return zeros_tensor
     else:
-        raise ValueError("zeros_like() can only handle torch.Tensor or fVDBTensor")
+        raise ValueError(
+            f"zeros_like() can only handle torch.Tensor, JaggedTensor, or fVDBTensor, "
+            f"got {type(tensor)}")
 
 
 def ones_like(
@@ -554,7 +556,9 @@ def ones_like(
             tensor.grid, data_ones, spatial_cache=tensor.spatial_cache)
         return ones_tensor
     else:
-        raise ValueError("ones_like() can only handle torch.Tensor or fVDBTensor")
+        raise ValueError(
+            f"ones_like() can only handle torch.Tensor, JaggedTensor, or fVDBTensor, "
+            f"got {type(tensor)}")
 
 
 # ---------------------------------------------------------------------------

@@ -244,10 +244,10 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
         query (JaggedTensor): Tensor of shape (B, L*, Dq),
         where L* is the variable sequence length.
 
-        key (JaggedTensor, optional): Tensor of shape (B, L*, Dk).  
+        key (JaggedTensor, optional): Tensor of shape (B, L*, Dk).
         Defaults to None, which indicates that self-attention is used.
 
-        value (JaggedTensor, optional): Tensor of shape (B, L*, Dv).  
+        value (JaggedTensor, optional): Tensor of shape (B, L*, Dv).
         Defaults to None, which indicates that self-attention is used.
 
         Returns
@@ -273,9 +273,21 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
                   isinstance(value, JaggedTensor)):
                 kvgrid, kdata, vdata = None, key, value
             else:
+                assert torch.is_tensor(key) and torch.is_tensor(value), (
+                    f"key and value must have types: both fVDBTensor, both JaggedTensor,"
+                    f" or both Tensor, got {type(key)} and {type(value)}")
+                assert key.dim() >= 3 and value.dim() >= 3, (
+                    f"Tensor key and value must be at least 3D (B, N, D), "
+                    f"got {key.shape} and {value.shape}")
                 kvgrid = None
                 kdata = JaggedTensor(key.unbind(dim=0))
                 vdata = JaggedTensor(value.unbind(dim=0))
+            assert qdata.num_tensors == kdata.num_tensors, (
+                f"query and key must have the same batch size, "
+                f"got {qdata.num_tensors} vs {kdata.num_tensors}")
+            assert qdata.num_tensors == vdata.num_tensors, (
+                f"query and value must have the same batch size, "
+                f"got {qdata.num_tensors} vs {vdata.num_tensors}")
         elif key is not None and value is None:
             assert self.kv_is_same_token, (
                 f"kv_is_same_token must True when key is not None and value is None")
@@ -284,9 +296,16 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             elif isinstance(key, JaggedTensor):
                 kvgrid, kdata, vdata = None, key, None
             else:
+                assert torch.is_tensor(key), (
+                    f"key must be fVDBTensor, JaggedTensor, or Tensor, got {type(key)}")
+                assert key.dim() >= 3, (
+                    f"Tensor key must be at least 3D (B, N, D), got {key.shape}")
                 kvgrid = None
                 kdata = JaggedTensor(key.unbind(dim=0))
                 vdata = None
+            assert qdata.num_tensors == kdata.num_tensors, (
+                f"query and key must have the same batch size, "
+                f"got {qdata.num_tensors} vs {kdata.num_tensors}")
         else:
             assert key is None and value is None, (
                 f"value must be None when key is None")

@@ -87,7 +87,9 @@ class LayerNorm32FVDB(nn.LayerNorm):
         result (fVDBTensor or fvdb.JaggedTensor or torch.Tensor): 
             The result of the layer normalization.
         """
-        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor, torch.Tensor))
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor, torch.Tensor)), (
+            f"indata must be fVDBTensor, JaggedTensor, or torch.Tensor, "
+            f"got {type(indata)}")
         input_data = indata if torch.is_tensor(indata) else indata.jdata
 
         original_dtype = input_data.dtype

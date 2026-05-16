@@ -92,7 +92,7 @@ class BasicResBlock3DFVDB(nn.Module):
             inplanes_mul = 1
             if self.pooling_type == "s2c" and stride != 1:
                 self.skip_pooling = DownSamplingSpatial2ChannelFVDB(scale_factor=stride)
-                inplanes_mul = 8
+                inplanes_mul = stride ** 3
             self.skip_connection = nn.Sequential(
                 # SparseConv3dFVDB(
                 #     inplanes, planes*self.expansion, 1, 1, bias=False),
@@ -244,7 +244,7 @@ class BottleneckResBlock3DFVDB(nn.Module):
             inplanes_mul = 1
             if self.pooling_type == "s2c" and stride != 1:
                 self.skip_pooling = DownSamplingSpatial2ChannelFVDB(scale_factor=stride)
-                inplanes_mul = 8
+                inplanes_mul = stride ** 3
             self.skip_connection = nn.Sequential(
                 # SparseConv3dFVDB(
                 #     inplanes, planes*self.expansion, 1, 1, bias=False),
