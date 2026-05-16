@@ -69,15 +69,24 @@ class MultiheadAttnFVDBBase(nn.Module):
     dtype (torch.dtype): Data type used for the tensors. Default is None.
     """
 
-    def __init__(self,
-                 emb_dim, num_heads,
-                 bias=True, kv_bias=False, qk_rmsnorm=False,
-                 kdim=None, vdim=None, sure_cross_attn=False,
-                 kv_is_same_token: bool = False,
-                 attn_drop=0.0, proj_drop=0.0,
-                 use_rope=False,
-                 checkpointing=False,
-                 device=None, dtype=None):
+    def __init__(
+        self,
+        emb_dim: int,
+        num_heads: int,
+        bias: bool = True,
+        kv_bias: bool = False,
+        qk_rmsnorm: bool = False,
+        kdim: int = None,
+        vdim: int = None,
+        sure_cross_attn: bool = False,
+        kv_is_same_token: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        use_rope: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+    ):
 
         nnkwargs = {'device': device, 'dtype': dtype}
         super(MultiheadAttnFVDBBase, self).__init__()
@@ -195,14 +204,23 @@ class MultiheadAttnFVDBBase(nn.Module):
 
 
 class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
-    def __init__(self, emb_dim, num_heads,
-                 bias=True, kv_bias=False, qk_rmsnorm=False,
-                 kdim=None, vdim=None, sure_cross_attn=False,
-                 kv_is_same_token: bool = False,
-                 attn_drop=0.0, proj_drop=0.0,
-                 use_rope=False,
-                 checkpointing=False,
-                 device=None, dtype=None):
+    def __init__(
+        self,
+        emb_dim: int,
+        num_heads: int,
+        bias: bool = True,
+        kv_bias: bool = False,
+        qk_rmsnorm: bool = False,
+        kdim: int = None,
+        vdim: int = None,
+        sure_cross_attn: bool = False,
+        kv_is_same_token: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        use_rope: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None):
 
         super(MultiheadFlashAttnFVDB, self).__init__(
             emb_dim, num_heads, bias=bias, kv_bias=kv_bias,
@@ -213,11 +231,13 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             use_rope=use_rope, checkpointing=checkpointing,
             device=device, dtype=dtype)
 
-    def forward(self,
-                query: fVDBTensor,
-                key: Union[fVDBTensor, JaggedTensor, torch.Tensor] = None,
-                value: Union[fVDBTensor, JaggedTensor, torch.Tensor] = None,
-                is_causal: bool = False):
+    def forward(
+        self,
+        query: Union[fVDBTensor, JaggedTensor],
+        key: Union[fVDBTensor, JaggedTensor, torch.Tensor] = None,
+        value: Union[fVDBTensor, JaggedTensor, torch.Tensor] = None,
+        is_causal: bool = False
+    ):
         """
         Args
         ----
@@ -234,8 +254,14 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
         -------
         atten_v (JaggedTensor): The attention-weighted values with shape (B, L*, D).
         """
-        assert isinstance(query, fVDBTensor)
-        qgrid, qdata = query.grid, query.data
+        assert isinstance(query, (fVDBTensor, JaggedTensor)), (
+            f"query must be fVDBTensor or JaggedTensor, got {type(query)}")
+        if isinstance(query, fVDBTensor):
+            qgrid, qdata = query.grid, query.data
+        elif isinstance(query, JaggedTensor):
+            qgrid, qdata = None, query
+        else:
+            raise ValueError(f"query must be fVDBTensor or JaggedTensor")
 
         if key is not None and value is not None:
             if (isinstance(key, fVDBTensor) and
@@ -268,32 +294,37 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
 
         if self.checkpointing and self.training:
             attv = gradient_checkpoint(
-                self._forward, qgrid, qdata, kvgrid, kdata, vdata,
+                self._forward, qdata, qgrid, kvgrid, kdata, vdata,
                 is_causal, use_reentrant=False)
         else:
             attv = self._forward(
-                qgrid, qdata, kvgrid, kdata, vdata, is_causal)
+                qdata, qgrid, kvgrid, kdata, vdata, is_causal)
 
-        attv = fVDBTensor(qgrid, attv, spatial_cache=query.spatial_cache)
+        if qgrid is not None:
+            attv = fVDBTensor(qgrid, attv, spatial_cache=query.spatial_cache)
+        else:
+            attv = attv
 
         return attv
 
-    def _forward(self,
-                 qgrid: GridBatch,
-                 query: JaggedTensor,
-                 kvgrid: GridBatch = None,
-                 key: JaggedTensor = None,
-                 value: JaggedTensor = None,
-                 is_causal: bool = False,
-                 kvindices_scale: float = 1.0,
-                 kvindices_bias: float = 0.0):
+    def _forward(
+        self,
+        query: JaggedTensor,
+        qgrid: GridBatch = None,
+        kvgrid: GridBatch = None,
+        key: JaggedTensor = None,
+        value: JaggedTensor = None,
+        is_causal: bool = False,
+        kvindices_scale: float = 1.0,
+        kvindices_bias: float = 0.0
+    ):
         """
         Args
         ----
-        qgrid (GridBatch): The FVDB grid batch for the queries.
-
         query (JaggedTensor): A jagged tensor with lshape [n1, n2, n3, ...]  
         and element shape (Dq,).
+
+        qgrid (GridBatch): The FVDB grid batch for the queries.
 
         kvgrid (GridBatch): The FVDB grid batch for the keys and values.
 
@@ -319,6 +350,7 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             qkv = qkv.view(qkv.shape[0], 3, self.num_heads, self.head_dim)
 
             if self.use_rope:
+                assert qgrid is not None, "qgrid must be provided when use_rope is True."
                 q, k, v = qkv.unbind(dim=1)  # (M, nH, d)
                 q, k = self._rope(
                     q, k, qgrid, kvgrid,
@@ -362,6 +394,7 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             kv = kv.view(kv.shape[0], 2, self.num_heads, self.head_dim)
 
             if self.use_rope:
+                assert qgrid is not None, "qgrid must be provided when use_rope is True."
                 k, v = kv.unbind(dim=1)  # (M, nH, d)
                 q, k = self._rope(
                     q, k, qgrid, kvgrid,
@@ -414,6 +447,7 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             v = self.to_v(vjdata).view(-1, self.num_heads, self.head_dim)
 
             if self.use_rope:
+                assert qgrid is not None, "qgrid must be provided when use_rope is True."
                 q, k = self._rope(
                     q, k, qgrid, kvgrid,
                     kvindices_scale=kvindices_scale, kvindices_bias=kvindices_bias)
@@ -457,21 +491,36 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
         attned_v = self.out_proj(attned_v)
         attned_v = self.proj_drop(attned_v)
 
-        attned_v = qgrid.jagged_like(attned_v)
+        if qgrid is not None:
+            attned_v = qgrid.jagged_like(attned_v)
+        elif isinstance(query, JaggedTensor):
+            attned_v = query.jagged_like(attned_v)
+        else:
+            attned_v = attned_v
+
         return attned_v
 
 
 class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
-    def __init__(self, emb_dim, num_heads,
-                 window_size: Union[int, Tuple[int, ...]],
-                 window_shift: Union[int, Tuple[int, ...]],
-                 bias=True, kv_bias=False, qk_rmsnorm=False,
-                 kdim=None, vdim=None, sure_cross_attn=False,
-                 attn_drop=0.0, proj_drop=0.0,
-                 use_rope=False,
-                 checkpointing=False,
-                 device=None, dtype=None):
-
+    def __init__(
+        self,
+        emb_dim: int,
+        num_heads: int,
+        window_size: Union[int, Tuple[int, ...]],
+        window_shift: Union[int, Tuple[int, ...]],
+        bias: bool = True,
+        kv_bias: bool = False,
+        qk_rmsnorm: bool = False,
+        kdim: int = None,
+        vdim: int = None,
+        sure_cross_attn: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        use_rope: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None
+    ):
         super(MultiheadFlashAttnSWinFVDB, self).__init__(
             emb_dim, num_heads, bias=bias, kv_bias=kv_bias,
             qk_rmsnorm=qk_rmsnorm, kdim=kdim, vdim=vdim,
@@ -488,10 +537,13 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
         assert len(window_size) == 3, "window_size must be 3-dim"
         self.max_window_seq_len = np.prod(window_size)
 
-    def forward(self, query: fVDBTensor,
-                key: fVDBTensor = None,
-                value: fVDBTensor = None,
-                is_causal: bool = False):
+    def forward(
+        self,
+        query: fVDBTensor,
+        key: fVDBTensor = None,
+        value: fVDBTensor = None,
+        is_causal: bool = False
+    ):
         """
         Args
         ----
@@ -551,16 +603,18 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
         attv = fVDBTensor(grids, attv, spatial_cache=spatial_cache)
         return attv
 
-    def _forward(self,
-                 qgrid: GridBatch,
-                 query: JaggedTensor,
-                 kvgrid: GridBatch = None,
-                 key: JaggedTensor = None,
-                 value: JaggedTensor = None,
-                 grids_idxs_winsort: JaggedTensor = None,
-                 grids_idxs_winargsort: JaggedTensor = None,
-                 win_seq_lens: JaggedTensor = None,
-                 is_causal: bool = False):
+    def _forward(
+        self,
+        qgrid: GridBatch,
+        query: JaggedTensor,
+        kvgrid: GridBatch = None,
+        key: JaggedTensor = None,
+        value: JaggedTensor = None,
+        grids_idxs_winsort: JaggedTensor = None,
+        grids_idxs_winargsort: JaggedTensor = None,
+        win_seq_lens: JaggedTensor = None,
+        is_causal: bool = False
+    ):
         """
         Args
         ----

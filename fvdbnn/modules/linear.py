@@ -16,10 +16,11 @@
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
 ###
+from typing import Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import fvdb
 from .vdbtensor import fVDBTensor
 from .utils import ElementwiseMixin
 
@@ -31,10 +32,15 @@ class LinearFVDB(ElementwiseMixin, nn.Linear):
     r"""
     Applies a linear transformation to the incoming data: :math:`y = xA^T + b`.
     """
-    def forward(self, input: fVDBTensor) -> fVDBTensor:
-        assert isinstance(input, fVDBTensor), (
-            f"Input should have type fVDBTensor, but got {type(input)}")
-        intype = input.data.jdata.dtype
+    def forward(
+        self,
+        indata: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]:
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor, torch.Tensor)), (
+            f"Input should have type fVDBTensor, fvdb.JaggedTensor and torch.Tensor, "
+            f"but got {type(indata)}")
+
+        intype = indata.dtype
         weight = (self.weight.to(dtype=intype)
                   if intype != self.weight.dtype else self.weight)
         bias = None
@@ -42,10 +48,19 @@ class LinearFVDB(ElementwiseMixin, nn.Linear):
             bias = (self.bias.to(dtype=intype)
                     if self.bias.dtype != intype else self.bias)
         # print(f"fvnn.Linear, weight.dtype={weight.dtype}, input.dtype={intype}")
-        res = F.linear(input.data.jdata, weight, bias)  # pylint: disable=not-callable
+        realdata = indata if torch.is_tensor(indata) else indata.jdata
+        res = F.linear(realdata, weight, bias)  # pylint: disable=not-callable
 
-        spatial_cache = input.spatial_cache
-        return fVDBTensor(input.grid, input.data.jagged_like(res), spatial_cache)
+        if isinstance(indata, fVDBTensor):
+            ret = fVDBTensor(
+                indata.grid, indata.grid.jagged_like(res),
+                spatial_cache=indata.spatial_cache)
+        elif isinstance(indata, fvdb.JaggedTensor):
+            ret = indata.jagged_like(res)
+        else:
+            ret = res
+
+        return ret
 
 
 class Cast2IntypeLinear(nn.Linear):

@@ -16,11 +16,11 @@
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
 ###
-from typing import Any
+from typing import Any, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import fvdb
 from .utils import fvnn_module
 from .vdbtensor import fVDBTensor
 
@@ -70,19 +70,26 @@ class LayerNorm32FVDB(nn.LayerNorm):
     dtype (torch.dtype, optional): data type of the module parameters. Default: ``None``
     """
 
-    def forward(self, input: fVDBTensor) -> fVDBTensor:
+    def forward(
+        self,
+        indata: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]:
         """
-        Apply Layer Normalization to the input :class:`JaggedTensor`.
+        Apply Layer Normalization to the data :class:`JaggedTensor`.
 
         Args
         ----
-        input (fVDBTensor): Input features to be normalized.
+        indata (fVDBTensor or fvdb.JaggedTensor or torch.Tensor): 
+            Input features to be normalized.
 
         Returns
         -------
-        result (fVDBTensor): The result of the layer normalization.
+        result (fVDBTensor or fvdb.JaggedTensor or torch.Tensor): 
+            The result of the layer normalization.
         """
-        input_data = input.data.jdata
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor, torch.Tensor))
+        input_data = indata if torch.is_tensor(indata) else indata.jdata
+
         original_dtype = input_data.dtype
         input_data = input_data.to(torch.float32)
         intype = input_data.dtype
@@ -94,10 +101,16 @@ class LayerNorm32FVDB(nn.LayerNorm):
         normed_x = F.layer_norm(
             input_data, self.normalized_shape, weight, bias, self.eps)
         normed_x = normed_x.to(original_dtype)
-        spatial_cache = input.spatial_cache
 
-        ret = fVDBTensor(input.grid, input.grid.jagged_like(normed_x),
-                         spatial_cache=spatial_cache)
+        if isinstance(indata, fVDBTensor):
+            ret = fVDBTensor(
+                indata.grid, indata.grid.jagged_like(normed_x),
+                spatial_cache=indata.spatial_cache)
+        elif isinstance(indata, fvdb.JaggedTensor):
+            ret = indata.jagged_like(normed_x)
+        else:
+            ret = normed_x
+
         return ret
 
 
@@ -112,7 +125,7 @@ class GroupNorm32FVDB(nn.GroupNorm):
     -----
     num_groups (int): number of groups to separate the channels into
 
-    num_channels (int): number of channels in the input :class:`JaggedTensor`
+    num_channels (int): number of channels in the data :class:`JaggedTensor`
 
     eps (float, optional): a value added to the denominator for numerical stability.
     Default: 1e-5.
@@ -126,29 +139,41 @@ class GroupNorm32FVDB(nn.GroupNorm):
     dtype (torch.dtype, optional): data type of the module parameters. Default: ``None``
     """
 
-    def super_forward(self, input: torch.Tensor,
-                      weight: torch.Tensor = None,
-                      bias: torch.Tensor = None) -> torch.Tensor:
-        return F.group_norm(input, self.num_groups, weight, bias, self.eps)
+    def super_forward(
+        self,
+        indata: torch.Tensor,
+        weight: torch.Tensor = None,
+        bias: torch.Tensor = None
+    ) -> torch.Tensor:
+        return F.group_norm(indata, self.num_groups, weight, bias, self.eps)
 
-    def forward(self, input: fVDBTensor) -> fVDBTensor:
+    def forward(
+        self,
+        indata: Union[fVDBTensor, fvdb.JaggedTensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
         """
         Apply Group Normalization to the input :class:`JaggedTensor`
         using the provided :class:`GridBatch`.
 
         Args:
-            data (JaggedTensor): Input features to be normalized.
-            grid (GridBatch): The grid batch corresponding to ``data``.
+            data (fVDBTensor or fvdb.JaggedTensor): Input features to be normalized.
 
         Returns:
-            result (JaggedTensor): The result of the group normalization.
+            result (fVDBTensor or fvdb.JaggedTensor):
+                The result of the group normalization.
         """
-        num_channels = input.data.jdata.size(1)
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"Input should have type fVDBTensor, fvdb.JaggedTensor, "
+            f"but got {type(indata)}"
+        )
+
+        input_data = indata.jdata
+        num_channels = input_data.shape[1]
         assert num_channels == self.num_channels, (
             f"Input feature should have the same number of channels as GroupNorm")
-        num_batches = input.grid.grid_count
+        num_batches = indata.num_tensors
 
-        flat_data, flat_offsets = input.data.jdata, input.data.joffsets
+        flat_data, flat_offsets = input_data, indata.joffsets
         origin_dtype = flat_data.dtype
         flat_data = flat_data.to(torch.float32)
         intype = flat_data.dtype
@@ -170,9 +195,13 @@ class GroupNorm32FVDB(nn.GroupNorm):
                 result_data[flat_offsets[b]: flat_offsets[b + 1]] = feat
 
         result_data = result_data.to(origin_dtype)
-        spatial_cache = input.spatial_cache
-        ret = fVDBTensor(input.grid, input.grid.jagged_like(result_data),
-                         spatial_cache=spatial_cache)
+        if isinstance(indata, fVDBTensor):
+            ret = fVDBTensor(
+                indata.grid, indata.grid.jagged_like(result_data),
+                spatial_cache=indata.spatial_cache)
+        else:
+            ret = indata.jagged_like(result_data)
+
         return ret
 
 
@@ -211,8 +240,8 @@ class BatchNorm32FVDB(nn.BatchNorm1d):
     dtype (torch.dtype, optional): data type of the module parameters. Default: ``None``
     """
 
-    def super_forward(self, input: torch.Tensor) -> torch.Tensor:
-        self._check_input_dim(input)
+    def super_forward(self, indata: torch.Tensor) -> torch.Tensor:
+        self._check_input_dim(indata)
 
         # exponential_average_factor is set to self.momentum
         # (when it is available) only so that it gets updated
@@ -247,9 +276,9 @@ class BatchNorm32FVDB(nn.BatchNorm1d):
         (i.e. in training mode when they are tracked), or when buffer stats are
         used for normalization (i.e. in eval mode when buffers are not None).
         """
-        origin_dtype = input.dtype
-        input = input.to(torch.float32)
-        intype = input.dtype
+        origin_dtype = indata.dtype
+        indata = indata.to(torch.float32)
+        intype = indata.dtype
         running_mean = self.running_mean
         if running_mean is not None and running_mean.dtype != intype:
             running_mean = running_mean.to(intype)
@@ -264,7 +293,7 @@ class BatchNorm32FVDB(nn.BatchNorm1d):
             bias = bias.to(intype)
 
         ret = F.batch_norm(
-            input,
+            indata,
             # If buffers are not to be tracked, ensure that they won't be updated
             running_mean if not self.training or self.track_running_stats else None,
             running_var if not self.training or self.track_running_stats else None,
@@ -277,14 +306,25 @@ class BatchNorm32FVDB(nn.BatchNorm1d):
         ret = ret.to(origin_dtype)
         return ret
 
-    def forward(self, input: fVDBTensor) -> fVDBTensor:
-        num_channels = input.data.jdata.size(1)
+    def forward(
+        self,
+        indata: Union[fVDBTensor, fvdb.JaggedTensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"Input should have type fVDBTensor, fvdb.JaggedTensor, "
+            f"but got {type(indata)}")
+
+        num_channels = indata.jdata.size(1)
         assert num_channels == self.num_features, (
             f"Input feature should have the same number of channels as BatchNorm")
-        result_data = self.super_forward(input.data.jdata)
-        spatial_cache = input.spatial_cache
-        return fVDBTensor(input.grid, input.grid.jagged_like(result_data),
-                          spatial_cache=spatial_cache)
+        result_data = self.super_forward(indata.jdata)
+        if isinstance(indata, fVDBTensor):
+            ret = fVDBTensor(
+                indata.grid, indata.grid.jagged_like(result_data),
+                spatial_cache=indata.spatial_cache)
+        else:
+            ret = indata.jagged_like(result_data)
+        return ret
 
 
 @fvnn_module
@@ -332,9 +372,9 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
     dtype (torch.dtype, optional): data type of the module parameters. Default: ``None``.
     """
 
-    def super_forward(self, input: torch.Tensor) -> torch.Tensor:
-        self._check_input_dim(input)
-        self._check_non_zero_input_channels(input)
+    def super_forward(self, indata: torch.Tensor) -> torch.Tensor:
+        self._check_input_dim(indata)
+        self._check_non_zero_input_channels(indata)
 
         # exponential_average_factor is set to self.momentum
         # (when it is available) only so that it gets updated
@@ -384,14 +424,14 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
             and torch.distributed.is_initialized()
         )
         if need_sync:
-            # currently only GPU/PrivateUse1 input is supported
-            if input.device.type not in [
+            # currently only GPU/PrivateUse1 indata is supported
+            if indata.device.type not in [
                 "cuda",
                 "xpu",
                 torch._C._get_privateuse1_backend_name(),
             ]:
                 raise ValueError(
-                    "SyncBatchNorm expected input tensor to be on GPU or XPU or "
+                    "SyncBatchNorm expected indata tensor to be on GPU or XPU or "
                     f"{torch._C._get_privateuse1_backend_name()}"
                 )
 
@@ -401,9 +441,9 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
             world_size = torch.distributed.get_world_size(process_group)
             need_sync = world_size > 1
 
-        origin_dtype = input.dtype
-        input = input.to(torch.float32)
-        intype = input.dtype
+        origin_dtype = indata.dtype
+        indata = indata.to(torch.float32)
+        intype = indata.dtype
         if running_mean is not None and running_mean.dtype != intype:
             running_mean = running_mean.to(intype)
         if running_var is not None and running_var.dtype != intype:
@@ -417,7 +457,7 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
         # fallback to framework BN when synchronization is not necessary
         if not need_sync:
             ret = F.batch_norm(
-                input,
+                indata,
                 running_mean,
                 running_var,
                 weight,
@@ -430,7 +470,7 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
             assert bn_training
             from torch.nn.modules._functions import SyncBatchNorm as sync_batch_norm
             ret = sync_batch_norm.apply(
-                input,
+                indata,
                 weight,
                 bias,
                 running_mean,
@@ -443,7 +483,10 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
         ret = ret.to(origin_dtype)
         return ret
 
-    def forward(self, input: fVDBTensor) -> fVDBTensor:
+    def forward(
+        self,
+        indata: Union[fVDBTensor, fvdb.JaggedTensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
         """
         Apply Synchronized Batch Normalization to the input
         :class:`JaggedTensor` using the provided :class:`GridBatch`.
@@ -455,13 +498,23 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
         Returns:
             result (JaggedTensor): The result of the synchronized batch normalization.
         """
-        num_channels = input.data.jdata.size(1)
+        assert isinstance(indata, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"Input should have type fVDBTensor, fvdb.JaggedTensor, "
+            f"but got {type(indata)}"
+        )
+
+        num_channels = indata.jdata.size(1)
         assert num_channels == self.num_features, (
             f"Input feature should have the same number of channels as BatchNorm")
-        result_data = self.forward(input.data.jdata)
-        spatial_cache = input.spatial_cache
-        return fVDBTensor(input.grid, input.grid.jagged_like(result_data),
-                          spatial_cache=spatial_cache)
+        result_data = self.forward(indata.jdata)
+
+        if isinstance(indata, fVDBTensor):
+            ret = fVDBTensor(
+                indata.grid, indata.grid.jagged_like(result_data),
+                spatial_cache=indata.spatial_cache)
+        else:
+            ret = indata.jagged_like(result_data)
+        return ret
 
     @classmethod
     def convert_sync_batchnorm(

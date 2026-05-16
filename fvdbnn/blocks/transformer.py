@@ -34,35 +34,38 @@ from ..modules.vdbtensor import fVDBTensor
 
 __all__ = ["SelfAttnTransformerBlockFVDB",
            "ModulateSelfAttnTransformerBlockFVDB",
+           "CrossAttnTransformerBlockFVDB",
            "ModulateCrossAttnTransformerBlockFVDB",
            "modulate_scale_shift",
            "modulate_gate"]
 
 
 class SelfAttnTransformerBlockFVDB(nn.Module):
-    def __init__(self,
-                 emb_dim: int,
-                 num_heads: int,
-                 bias: bool = False,
-                 kv_bias: bool = False,
-                 qk_rmsnorm: bool = False,
-                 ln_affine: Union[bool, List[bool]] = False,
-                 attn_dropout: float = 0.0,
-                 attn_outproj_dropout: float = 0.0,
-                 attn_mode: Literal["full", "swin"] = "full",
-                 attn_window_size: int = None,
-                 attn_window_shift: int = None,
-                 ffn_ratio: float = 4.0,
-                 ffn_outdim: int = None,
-                 ffn_bias: bool = False,
-                 ffn_dropout: float = 0.0,
-                 ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
-                 use_rope: bool = False,
-                 checkpointing: bool = False,
-                 device: torch.device = None,
-                 dtype: torch.dtype = None,
-                 eps: float = 1e-6,
-                 **kwargs):
+    def __init__(
+        self,
+        emb_dim: int,
+        num_heads: int,
+        bias: bool = False,
+        kv_bias: bool = False,
+        qk_rmsnorm: bool = False,
+        ln_affine: Union[bool, List[bool]] = False,
+        attn_dropout: float = 0.0,
+        attn_outproj_dropout: float = 0.0,
+        attn_mode: Literal["full", "swin"] = "full",
+        attn_window_size: int = None,
+        attn_window_shift: int = None,
+        ffn_ratio: float = 4.0,
+        ffn_outdim: int = None,
+        ffn_bias: bool = False,
+        ffn_dropout: float = 0.0,
+        ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
+        use_rope: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        eps: float = 1e-6,
+        **kwargs
+    ):
         super(SelfAttnTransformerBlockFVDB, self).__init__(**kwargs)
         self.checkpointing = checkpointing
         self.attn_mode = attn_mode
@@ -74,7 +77,7 @@ class SelfAttnTransformerBlockFVDB(nn.Module):
                 "attn_window_size and attn_window_shift must be specified for swin attn")
 
         if not isinstance(ln_affine, (tuple, list)):
-            assert isinstance(ln_affine, bool), "ln_affine must be bool or ist of bool"
+            assert isinstance(ln_affine, bool), "ln_affine must be bool or list of bool"
             ln_affine = [ln_affine] * 3
         assert len(ln_affine) >= 2, (
             f"ln_affine must have at least 2 elements, got {ln_affine}")
@@ -122,22 +125,41 @@ class SelfAttnTransformerBlockFVDB(nn.Module):
             dtype=dtype
         )
 
-    def forward(self, x: fVDBTensor) -> fVDBTensor:
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+    def forward(
+        self,
+        x: Union[fVDBTensor, fvdb.JaggedTensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
+        assert isinstance(x, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"x must be fVDBTensor or fvdb.JaggedTensor, got {type(x)}")
+
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         if self.checkpointing and self.training:
             grid, data, spatial_cache = gradient_checkpoint(
                 self._forward, grid, data, spatial_cache, use_reentrant=False)
         else:
             grid, data, spatial_cache = self._forward(grid, data, spatial_cache)
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(x, fVDBTensor):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         return x
 
-    def _forward(self,
-                 grid: fvdb.GridBatch,
-                 data: fvdb.JaggedTensor,
-                 spatial_cache: dict = None):
-        x = fVDBTensor(grid, data, spatial_cache)
+    def _forward(
+        self,
+        grid: fvdb.GridBatch,
+        data: fvdb.JaggedTensor,
+        spatial_cache: dict = None
+    ):
+        if isinstance(grid, fvdb.GridBatch):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
 
         h = self.norm1(x)
         h = self.attn(h)
@@ -145,37 +167,43 @@ class SelfAttnTransformerBlockFVDB(nn.Module):
 
         h = self.norm2(x)
         h = self.mlp(h)
-        x: fVDBTensor = x + h
+        x = x + h
 
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         return grid, data, spatial_cache
 
 
 class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
-    def __init__(self,
-                 emb_dim: int,
-                 num_heads: int,
-                 bias: bool = False,
-                 kv_bias: bool = False,
-                 qk_rmsnorm: bool = False,
-                 ln_affine: Union[bool, List[bool]] = False,
-                 attn_dropout: float = 0.0,
-                 attn_outproj_dropout: float = 0.0,
-                 attn_mode: Literal["full", "swin"] = "full",
-                 attn_window_size: int = None,
-                 attn_window_shift: int = None,
-                 ffn_ratio: float = 4.0,
-                 ffn_outdim: int = None,
-                 ffn_bias: bool = False,
-                 ffn_dropout: float = 0.0,
-                 ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
-                 use_rope: bool = False,
-                 share_modulate: bool = False,
-                 checkpointing: bool = False,
-                 device: torch.device = None,
-                 dtype: torch.dtype = None,
-                 eps: float = 1e-6,
-                 **kwargs):
+    def __init__(
+        self,
+        emb_dim: int,
+        num_heads: int,
+        bias: bool = False,
+        kv_bias: bool = False,
+        qk_rmsnorm: bool = False,
+        ln_affine: Union[bool, List[bool]] = False,
+        attn_dropout: float = 0.0,
+        attn_outproj_dropout: float = 0.0,
+        attn_mode: Literal["full", "swin"] = "full",
+        attn_window_size: int = None,
+        attn_window_shift: int = None,
+        ffn_ratio: float = 4.0,
+        ffn_outdim: int = None,
+        ffn_bias: bool = False,
+        ffn_dropout: float = 0.0,
+        ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
+        use_rope: bool = False,
+        share_modulate: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        eps: float = 1e-6,
+        **kwargs
+    ):
         super(ModulateSelfAttnTransformerBlockFVDB, self).__init__(**kwargs)
         self.checkpointing = checkpointing
         self.share_modulate = share_modulate
@@ -188,7 +216,7 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
                 "attn_window_size and attn_window_shift must be specified for swin attn")
 
         if not isinstance(ln_affine, (tuple, list)):
-            assert isinstance(ln_affine, bool), "ln_affine must be bool or ist of bool"
+            assert isinstance(ln_affine, bool), "ln_affine must be bool or list of bool"
             ln_affine = [ln_affine] * 3
         assert len(ln_affine) >= 2, (
             f"ln_affine must have at least 2 elements, got {ln_affine}")
@@ -243,9 +271,20 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
                 nn.Linear(emb_dim, 6 * emb_dim, bias=True)
             )
 
-    def forward(self, x: fVDBTensor, mod: torch.Tensor,
-                mod_shape_has_been_processed: bool = False) -> fVDBTensor:
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+    def forward(
+        self,
+        x: Union[fVDBTensor, fvdb.JaggedTensor],
+        mod: torch.Tensor,
+        mod_shape_has_been_processed: bool = False
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
+        assert isinstance(x, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"x must be fVDBTensor or fvdb.JaggedTensor, got {type(x)}")
+
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         if self.checkpointing and self.training:
             grid, data, spatial_cache = gradient_checkpoint(
                 self._forward, grid, data, mod, spatial_cache,
@@ -255,14 +294,21 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
                 grid, data, mod, spatial_cache,
                 mod_shape_has_been_processed=mod_shape_has_been_processed)
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(x, fVDBTensor):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         return x
 
-    def _forward(self, grid: fvdb.GridBatch,
-                 data: fvdb.JaggedTensor,
-                 mod: torch.Tensor,
-                 spatial_cache: dict = None,
-                 mod_shape_has_been_processed: bool = False):
+    def _forward(
+        self,
+        grid: fvdb.GridBatch,
+        data: fvdb.JaggedTensor,
+        mod: torch.Tensor,
+        spatial_cache: dict = None,
+        mod_shape_has_been_processed: bool = False
+    ):
         if not self.share_modulate:
             mod = self.adaLN_modulation(mod)  # (B, 6*emb_dim) or ([n1,n2,...], 6*emb_dim)
 
@@ -280,7 +326,11 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
         (shift_msa, scale_msa, gate_msa,
          shift_mlp, scale_mlp, gate_mlp) = mod.chunk(6, dim=-1)
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(grid, fvdb.GridBatch):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         h = self.norm1(x)
         h = modulate_scale_shift(
             h, scale_msa, shift_msa, all_inst_same_seqlen, num_elems_inst,
@@ -302,7 +352,12 @@ class ModulateSelfAttnTransformerBlockFVDB(nn.Module):
             force_directly_modulate=mod_shape_has_been_processed)
         x = x + h
 
-        return x.grid, x.data, x.spatial_cache
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
+        return grid, data, spatial_cache
 
 
 
@@ -343,13 +398,13 @@ class CrossAttnTransformerBlockFVDB(nn.Module):
             f"only support attn_mode 'full' Now, but got {self.attn_mode}")
 
         if not isinstance(ln_affine, (tuple, list)):
-            assert isinstance(ln_affine, bool), "ln_affine must be bool or ist of bool"
+            assert isinstance(ln_affine, bool), "ln_affine must be bool or list of bool"
             ln_affine = [ln_affine] * 3
         assert len(ln_affine) >= 2, (
             f"ln_affine must have at least 2 elements, got {ln_affine}")
-        
+
         self.norm1 = LayerNorm32FVDB(emb_dim, elementwise_affine=ln_affine[0], eps=eps)
-        
+
         self.cross_attn = MultiheadFlashAttnFVDB(
             emb_dim,
             num_heads=num_heads,
@@ -381,10 +436,19 @@ class CrossAttnTransformerBlockFVDB(nn.Module):
 
     def forward(
         self,
-        x: fVDBTensor,
+        x: Union[fVDBTensor, fvdb.JaggedTensor],
         context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
-    ) -> fVDBTensor:
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]:
+        assert isinstance(x, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"x must be fVDBTensor or fvdb.JaggedTensor, got {type(x)}")
+        assert isinstance(context, (fVDBTensor, fvdb.JaggedTensor, torch.Tensor)), (
+            f"context must be fVDBTensor or fvdb.JaggedTensor or torch.Tensor, got {type(context)}")
+
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         if self.checkpointing and self.training:
             grid, data, spatial_cache = gradient_checkpoint(
                 self._forward, grid, data, context, spatial_cache, use_reentrant=False)
@@ -392,7 +456,11 @@ class CrossAttnTransformerBlockFVDB(nn.Module):
             grid, data, spatial_cache = (
                 self._forward(grid, data, context, spatial_cache))
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(x, fVDBTensor):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         return x
 
     def _forward(
@@ -402,50 +470,59 @@ class CrossAttnTransformerBlockFVDB(nn.Module):
         context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
         spatial_cache: dict = None
     ):
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(grid, fvdb.GridBatch):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
 
         h = self.norm1(x)
-        h = self.attn(h, context)
+        h = self.cross_attn(h, context)
         x = x + h
 
         h = self.norm2(x)
         h = self.mlp(h)
-        x: fVDBTensor = x + h
+        x: Union[fVDBTensor, fvdb.JaggedTensor] = x + h
 
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         return grid, data, spatial_cache
 
 
 class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
-    def __init__(self,
-                 emb_dim: int,
-                 context_emb_dim: int,
-                 num_heads: int,
-                 bias: bool = True,
-                 kv_bias: bool = True,
-                 qk_rmsnorm: bool = False,
-                 qk_rmsnorm_cross: bool = False,
-                 ln_affine: Union[bool, list[bool]] = False,
-                 attn_dropout: float = 0.0,
-                 attn_outproj_dropout: float = 0.0,
-                 self_attn_mode: Literal["full", "swin"] = "full",
-                 self_attn_window_size: int = None,
-                 self_attn_window_shift: int = None,
-                 cross_attn_mode: Literal["full", "swin"] = "full",
-                 cross_attn_window_size: int = None,
-                 cross_attn_window_shift: int = None,
-                 ffn_ratio: float = 4.0,
-                 ffn_outdim: int = None,
-                 ffn_bias: bool = True,
-                 ffn_dropout: float = 0.0,
-                 ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
-                 use_rope: bool = False,
-                 share_modulate: bool = False,
-                 checkpointing: bool = False,
-                 device: torch.device = None,
-                 dtype: torch.dtype = None,
-                 eps: float = 1e-6,
-                 **kwargs):
+    def __init__(
+        self,
+        emb_dim: int,
+        context_emb_dim: int,
+        num_heads: int,
+        bias: bool = True,
+        kv_bias: bool = True,
+        qk_rmsnorm: bool = False,
+        qk_rmsnorm_cross: bool = False,
+        ln_affine: Union[bool, list[bool]] = False,
+        attn_dropout: float = 0.0,
+        attn_outproj_dropout: float = 0.0,
+        self_attn_mode: Literal["full", "swin"] = "full",
+        self_attn_window_size: int = None,
+        self_attn_window_shift: int = None,
+        cross_attn_mode: Literal["full", "swin"] = "full",
+        cross_attn_window_size: int = None,
+        cross_attn_window_shift: int = None,
+        ffn_ratio: float = 4.0,
+        ffn_outdim: int = None,
+        ffn_bias: bool = True,
+        ffn_dropout: float = 0.0,
+        ffn_activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
+        use_rope: bool = False,
+        share_modulate: bool = False,
+        checkpointing: bool = False,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        eps: float = 1e-6,
+        **kwargs
+    ):
         super(ModulateCrossAttnTransformerBlockFVDB, self).__init__(**kwargs)
         self.checkpointing = checkpointing
         self.share_modulate = share_modulate
@@ -532,12 +609,21 @@ class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
                 nn.Linear(emb_dim, 6 * emb_dim, bias=True)
             )
 
-    def forward(self,
-                x: fVDBTensor,
-                mod: torch.Tensor,
-                context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
-                mod_shape_has_been_processed: bool = False):
-        grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+    def forward(
+        self,
+        x: Union[fVDBTensor, fvdb.JaggedTensor],
+        mod: torch.Tensor,
+        context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
+        mod_shape_has_been_processed: bool = False
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor]:
+        assert isinstance(x, (fVDBTensor, fvdb.JaggedTensor)), (
+            f"x must be fVDBTensor or fvdb.JaggedTensor, got {type(x)}")
+
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
         if self.checkpointing and self.training:
             grid, data, spatial_cache = gradient_checkpoint(
                 self._forward, grid, data, mod, context, spatial_cache,
@@ -546,16 +632,22 @@ class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
             grid, data, spatial_cache = self._forward(
                 grid, data, mod, context, spatial_cache, mod_shape_has_been_processed)
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(x, fVDBTensor):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         return x
 
-    def _forward(self,
-                 grid: fvdb.GridBatch,
-                 data: fvdb.JaggedTensor,
-                 mod: torch.Tensor,
-                 context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
-                 spatial_cache: dict = None,
-                 mod_shape_has_been_processed: bool = False):
+    def _forward(
+        self,
+        grid: fvdb.GridBatch,
+        data: fvdb.JaggedTensor,
+        mod: torch.Tensor,
+        context: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor],
+        spatial_cache: dict = None,
+        mod_shape_has_been_processed: bool = False
+    ):
         if not self.share_modulate:
             mod = self.adaLN_modulation(mod)  # (B, 6*emb_dim) or ([n1,n2,..], 6*emb_dim)
 
@@ -573,7 +665,11 @@ class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
         (shift_msa, scale_msa, gate_msa,
          shift_mlp, scale_mlp, gate_mlp) = mod.chunk(6, dim=-1)
 
-        x = fVDBTensor(grid, data, spatial_cache)
+        if isinstance(grid, fvdb.GridBatch):
+            x = fVDBTensor(grid, data, spatial_cache)
+        else:
+            x = data
+
         h = self.norm1(x)
         h = modulate_scale_shift(
             h, scale_msa, shift_msa, all_inst_same_seqlen, num_elems_inst,
@@ -601,16 +697,22 @@ class ModulateCrossAttnTransformerBlockFVDB(nn.Module):
 
         x = x + h
 
-        return x.grid, x.data, x.spatial_cache
+        if isinstance(x, fVDBTensor):
+            grid, data, spatial_cache = x.grid, x.data, x.spatial_cache
+        else:
+            grid, data, spatial_cache = None, x, None
+
+        return grid, data, spatial_cache
 
 
 def modulate_scale_shift(
-        h: Union[fVDBTensor, fvdb.JaggedTensor],
-        scale: torch.Tensor,
-        shift: torch.Tensor,
-        all_inst_same_seqlen: bool = None,
-        num_elems_inst: torch.Tensor = None,
-        force_directly_modulate: bool = False):
+    h: Union[fVDBTensor, fvdb.JaggedTensor],
+    scale: torch.Tensor,
+    shift: torch.Tensor,
+    all_inst_same_seqlen: bool = None,
+    num_elems_inst: torch.Tensor = None,
+    force_directly_modulate: bool = False
+):
     if force_directly_modulate:
         return h * (scale + 1) + shift
 
@@ -623,8 +725,11 @@ def modulate_scale_shift(
     if all_inst_same_seqlen:
         hjdata = h.jdata.view(h.num_tensors, num_elems_inst[0], *h.eshape)
         hjdata = hjdata * (scale.unsqueeze(1) + 1) + shift.unsqueeze(1)
-        hdata = h.grid.jagged_like(hjdata.reshape(-1, *h.eshape))
-        h = fVDBTensor(h.grid, hdata, h.spatial_cache)
+        if isinstance(h, fVDBTensor):
+            hdata = h.grid.jagged_like(hjdata.reshape(-1, *h.eshape))
+            h = fVDBTensor(h.grid, hdata, h.spatial_cache)
+        else:
+            h = h.jagged_like(hjdata.reshape(-1, *h.eshape))
     else:
         # for this case, scale & shift must be repeat interleaved
         h = h * (scale + 1) + shift
@@ -633,11 +738,12 @@ def modulate_scale_shift(
 
 
 def modulate_gate(
-        h: Union[fVDBTensor, fvdb.JaggedTensor],
-        gate: torch.Tensor,
-        all_inst_same_seqlen: bool = None,
-        num_elems_inst: torch.Tensor = None,
-        force_directly_modulate: bool = False):
+    h: Union[fVDBTensor, fvdb.JaggedTensor],
+    gate: torch.Tensor,
+    all_inst_same_seqlen: bool = None,
+    num_elems_inst: torch.Tensor = None,
+    force_directly_modulate: bool = False
+):
     if force_directly_modulate:
         return h * gate
 
@@ -650,8 +756,11 @@ def modulate_gate(
     if all_inst_same_seqlen:
         hjdata = h.jdata.view(h.num_tensors, num_elems_inst[0], *h.eshape)
         hjdata = hjdata * gate.unsqueeze(1)
-        hdata = h.grid.jagged_like(hjdata.reshape(-1, *h.eshape))
-        h = fVDBTensor(h.grid, hdata, h.spatial_cache)
+        if isinstance(h, fVDBTensor):
+            hdata = h.grid.jagged_like(hjdata.reshape(-1, *h.eshape))
+            h = fVDBTensor(h.grid, hdata, h.spatial_cache)
+        else:
+            h = h.jagged_like(hjdata.reshape(-1, *h.eshape))
     else:
         # for this case, gate must be repeat interleaved
         h = h * gate

@@ -16,11 +16,11 @@
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
 ###
-
+from typing import Union
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
+import fvdb
 from ..modules.vdbtensor import fVDBTensor
 from ..modules.activation import GELUFVDB
 from ..modules.linear import LinearFVDB
@@ -31,16 +31,18 @@ __all__ = ["FeedForwardNetworkFVDB"]
 
 
 class FeedForwardNetworkFVDB(nn.Module):
-    def __init__(self,
-                 in_features: int,
-                 out_features: int = None,
-                 hidden_ratio: float = None,
-                 hidden_features: int = None,
-                 bias: bool = True,
-                 activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
-                 dropout: float = 0.0,
-                 device: torch.device = None,
-                 dtype: torch.dtype = None):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int = None,
+        hidden_ratio: float = None,
+        hidden_features: int = None,
+        bias: bool = True,
+        activation: nn.Module = lambda: GELUFVDB(approximate="tanh"),
+        dropout: float = 0.0,
+        device: torch.device = None,
+        dtype: torch.dtype = None
+    ):
         """
         FeedForwardNetworkFVDB is a module that implements the feedforward network
         in the Transformer model. It consists of two linear layers with a
@@ -81,17 +83,20 @@ class FeedForwardNetworkFVDB(nn.Module):
             DropoutFVDB(dropout)
         )
 
-    def forward(self, x: fVDBTensor) -> fVDBTensor:
+    def forward(
+        self, 
+        x: Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]
+    ) -> Union[fVDBTensor, fvdb.JaggedTensor, torch.Tensor]:
         """
         Forward pass of the FeedForwardNetworkFVDB.
 
         Args
         -----
-        x (fVDBTensor): The input tensor.
+        x (fVDBTensor or fvdb.JaggedTensor or torch.Tensor): The input tensor.
 
         Returns
         -------
-        fVDBTensor: The output tensor.
+        x (fVDBTensor or fvdb.JaggedTensor or torch.Tensor): The output tensor.
         """
         x = self.mlp(x)
         return x
