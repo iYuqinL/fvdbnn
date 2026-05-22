@@ -75,6 +75,7 @@ class MultiheadAttnFVDBBase(nn.Module):
         num_heads: int,
         bias: bool = True,
         kv_bias: bool = False,
+        qk_layernorm: bool = False,
         qk_rmsnorm: bool = False,
         kdim: int = None,
         vdim: int = None,
@@ -108,7 +109,11 @@ class MultiheadAttnFVDBBase(nn.Module):
         self.kv_is_same_token = kv_is_same_token
 
         self.num_heads = num_heads
+        self.is_qk_layernorm = qk_layernorm
         self.is_qk_rmsnorm = qk_rmsnorm
+        assert not (self.is_qk_layernorm and self.is_qk_rmsnorm), (
+            "is_qk_layernorm and qk_rmsnorm cannot be both True")
+
         self.attn_drop_p = attn_drop
         self.proj_drop_p = proj_drop
         self.use_rope = use_rope
@@ -135,6 +140,9 @@ class MultiheadAttnFVDBBase(nn.Module):
         if self.is_qk_rmsnorm:
             self.q_rmsnorm = MultiHeadRMSNorm(self.head_dim, num_heads)
             self.k_rmsnorm = MultiHeadRMSNorm(self.head_dim, num_heads)
+        if self.is_qk_layernorm:
+            self.q_lnorm = nn.LayerNorm(self.head_dim)
+            self.k_lnorm = nn.LayerNorm(self.head_dim)
 
         self.attn_drop = nn.Dropout(attn_drop)
 
@@ -211,6 +219,7 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
         bias: bool = True,
         kv_bias: bool = False,
         qk_rmsnorm: bool = False,
+        qk_layernorm: bool = False,
         kdim: int = None,
         vdim: int = None,
         sure_cross_attn: bool = False,
@@ -224,7 +233,8 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
 
         super(MultiheadFlashAttnFVDB, self).__init__(
             emb_dim, num_heads, bias=bias, kv_bias=kv_bias,
-            qk_rmsnorm=qk_rmsnorm, kdim=kdim, vdim=vdim,
+            qk_rmsnorm=qk_rmsnorm, qk_layernorm=qk_layernorm,
+            kdim=kdim, vdim=vdim,
             sure_cross_attn=sure_cross_attn,
             kv_is_same_token=kv_is_same_token,
             attn_drop=attn_drop, proj_drop=proj_drop,
@@ -382,6 +392,11 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
                 q = self.q_rmsnorm(q.contiguous())
                 k = self.k_rmsnorm(k.contiguous())
                 qkv = torch.cat([q, k, v], dim=1).contiguous()
+            if self.is_qk_layernorm:
+                q, k, v = torch.chunk(qkv, 3, dim=1)  # (M, 1, nH, d)
+                q = self.q_lnorm(q.contiguous())
+                k = self.k_lnorm(k.contiguous())
+                qkv = torch.cat([q, k, v], dim=1).contiguous()
 
             # to here, qkv is (M, 3, nH, d), M is total totens from all batch
             n_elems_per_inst = torch.as_tensor(query.lshape)
@@ -425,6 +440,11 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
                 k, v = torch.chunk(kv, 2, dim=1)  # (M, 1, nH, d)
                 q = self.q_rmsnorm(q.contiguous())
                 k = self.k_rmsnorm(k.contiguous())
+                kv = torch.cat([k, v], dim=1).contiguous()
+            if self.is_qk_layernorm:
+                k, v = torch.chunk(kv, 2, dim=1)  # (M, 1, nH, d)
+                q = self.q_lnorm(q.contiguous())
+                k = self.k_lnorm(k.contiguous())
                 kv = torch.cat([k, v], dim=1).contiguous()
 
             # to here, q is (M, nH, d);
@@ -474,6 +494,9 @@ class MultiheadFlashAttnFVDB(MultiheadAttnFVDBBase):
             if self.is_qk_rmsnorm:
                 q = self.q_rmsnorm(q)
                 k = self.k_rmsnorm(k)
+            if self.is_qk_layernorm:
+                q = self.q_lnorm(q)
+                k = self.k_lnorm(k)
 
             n_elems_per_inst_q = torch.as_tensor(query.lshape)
             n_elems_per_inst_k = torch.as_tensor(key.lshape)
@@ -530,6 +553,7 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
         bias: bool = True,
         kv_bias: bool = False,
         qk_rmsnorm: bool = False,
+        qk_layernorm: bool = False,
         kdim: int = None,
         vdim: int = None,
         sure_cross_attn: bool = False,
@@ -542,7 +566,8 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
     ):
         super(MultiheadFlashAttnSWinFVDB, self).__init__(
             emb_dim, num_heads, bias=bias, kv_bias=kv_bias,
-            qk_rmsnorm=qk_rmsnorm, kdim=kdim, vdim=vdim,
+            qk_rmsnorm=qk_rmsnorm, qk_layernorm=qk_layernorm,
+            kdim=kdim, vdim=vdim,
             sure_cross_attn=sure_cross_attn,
             attn_drop=attn_drop, proj_drop=proj_drop,
             use_rope=use_rope, checkpointing=checkpointing,
@@ -681,6 +706,11 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
                 q = self.q_rmsnorm(q.contiguous())
                 k = self.k_rmsnorm(k.contiguous())
                 qkv = torch.cat([q, k, v], dim=1).contiguous()
+            if self.is_qk_layernorm:
+                q, k, v = torch.chunk(qkv, 3, dim=1)  # (M, 1, nH, d)
+                q = self.q_lnorm(q.contiguous())
+                k = self.k_lnorm(k.contiguous())
+                qkv = torch.cat([q, k, v], dim=1).contiguous()
 
             qkv = qkv[grids_idxs_winsort.jdata]     # (M, 3*D)
             # to here, qkv is (M, 3, nH, d), M is total totens from all batch
@@ -715,6 +745,11 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
                 k, v = torch.chunk(kv, 2, dim=1)  # (M, 1, nH, d)
                 q = self.q_rmsnorm(q.contiguous())
                 k = self.k_rmsnorm(k.contiguous())
+                kv = torch.cat([k, v], dim=1).contiguous()
+            if self.is_qk_layernorm:
+                k, v = torch.chunk(kv, 2, dim=1)  # (M, 1, nH, d)
+                q = self.q_lnorm(q.contiguous())
+                k = self.k_lnorm(k.contiguous())
                 kv = torch.cat([k, v], dim=1).contiguous()
 
             q = q[grids_idxs_winsort.jdata]
@@ -753,6 +788,9 @@ class MultiheadFlashAttnSWinFVDB(MultiheadAttnFVDBBase):
             if self.is_qk_rmsnorm:
                 q = self.q_rmsnorm(q)
                 k = self.k_rmsnorm(k)
+            if self.is_qk_layernorm:
+                q = self.q_lnorm(q)
+                k = self.k_lnorm(k)
 
             q = q[grids_idxs_winsort.jdata]
             k = k[grids_idxs_winsort.jdata]
