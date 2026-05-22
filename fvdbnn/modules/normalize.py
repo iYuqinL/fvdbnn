@@ -33,6 +33,9 @@ __all__ = ["MultiHeadRMSNorm", "LayerNorm32FVDB", "GroupNorm32FVDB",
 class MultiHeadRMSNorm(nn.Module):
     def __init__(self, dim: int, heads: int):
         super().__init__()
+        self.heads = heads
+        self.dim = dim
+
         self.scale = dim**0.5
         self.gamma = nn.Parameter(torch.ones(heads, dim))
 
@@ -45,6 +48,10 @@ class MultiHeadRMSNorm(nn.Module):
         norm_x = F.normalize(x.float(), dim=-1)
         norm_x = (norm_x * self.gamma * self.scale).to(x.dtype)
         return norm_x
+
+    def extra_repr(self):
+        repr_str = f"heads={self.heads}, dim={self.dim}, scale={self.scale}"
+        return repr_str
 
 
 @fvnn_module
@@ -508,7 +515,7 @@ class SyncBatchNorm32FVDB(nn.SyncBatchNorm):
         num_channels = indata.jdata.size(1)
         assert num_channels == self.num_features, (
             f"Input feature should have the same number of channels as BatchNorm")
-        result_data = self.forward(indata.jdata)
+        result_data = self.super_forward(indata.jdata)
 
         if isinstance(indata, fVDBTensor):
             ret = fVDBTensor(
