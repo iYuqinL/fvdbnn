@@ -28,7 +28,7 @@ from torch.utils.checkpoint import checkpoint as gradient_checkpoint
 from ..modules.vdbtensor import fVDBTensor
 from ..functional.attn import calc_attn_window_partition
 from ..modules.linear import Cast2IntypeLinear
-from ..modules.normalize import MultiHeadRMSNorm
+from ..modules.normalize import MultiHeadRMSNorm, LayerNorm32FVDB
 from ..posenc import RotaryPositionEncoding
 from ..utils.utils import get_gpu_compute_capacity
 
@@ -141,8 +141,8 @@ class MultiheadAttnFVDBBase(nn.Module):
             self.q_rmsnorm = MultiHeadRMSNorm(self.head_dim, num_heads)
             self.k_rmsnorm = MultiHeadRMSNorm(self.head_dim, num_heads)
         if self.is_qk_layernorm:
-            self.q_lnorm = nn.LayerNorm(self.head_dim)
-            self.k_lnorm = nn.LayerNorm(self.head_dim)
+            self.q_lnorm = LayerNorm32FVDB(self.head_dim)
+            self.k_lnorm = LayerNorm32FVDB(self.head_dim)
 
         self.attn_drop = nn.Dropout(attn_drop)
 
