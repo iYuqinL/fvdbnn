@@ -296,6 +296,12 @@ class fVDBTensor:
         return fVDBTensor(self.grid, self.data.clone(),
                          spatial_cache=self.spatial_cache)
 
+    def jagged_like(self, other: torch.Tensor):
+        jagged = self.grid.jagged_like(other)
+        ret = fVDBTensor(self.grid, jagged, spatial_cache=self.spatial_cache)
+        # ret = ret.requires_grad_(self.requires_grad)
+        return ret
+
     @property
     def num_tensors(self):
         return self.data.num_tensors
